@@ -6,3 +6,11 @@
 __pycache__/
 .ipynb_checkpoints/
 *.csv
+*.txt
+*.md
+
+# Cache and build tools
+.cache/
+compile_commands.json
+*.npy
+*.h5

@@ -18,9 +18,16 @@ Cách chạy:
     python convert_model.py
 """
 
+import sys
 import json
 import struct
 from pathlib import Path
+
+# Buoc stdout/stderr dung UTF-8 tren Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 # ─────────────────────────────────────────────────────────────
 # CẤU HÌNH

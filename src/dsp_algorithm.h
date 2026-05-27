@@ -1,6 +1,8 @@
 #ifndef DSP_ALGORITHM_H
 #define DSP_ALGORITHM_H
 
+
+
 //Filter class
 
 class EMAFilter {
@@ -10,7 +12,7 @@ class EMAFilter {
 		bool is_initialized;
 	public:
 		// Init
-		EMAFilter(float alpha = 0.274f);
+		EMAFilter(float alpha = 0.274f); // can be changed to 0.15 to get better noise reduction
 
 		void reset();
 
@@ -66,6 +68,33 @@ class PeakDetector{
 		//Process sample -> return true if finding completely action
 		//Also store out_start_time and out_end_time through pointer
 		bool processSample(float value, unsigned long timestamp, unsigned long &out_start_time, unsigned long &out_end_time);
+};
+
+
+//Resampler
+const int RESAMPLER_BUFFER = 100;
+
+class Resampler{
+	public:
+		static void resample(CircularBuffer *cb, unsigned long start_time, unsigned long end_time, float out_matrix[100][6]);
+};
+
+class DominantAxisSelector{
+	private:
+		static const int WINDOW = 100;
+		float history[WINDOW][3];
+		int head;
+		int count;
+		float sum[3];
+		float sum_sq[3];
+		int selected_axis;
+
+	public:
+		DominantAxisSelector();
+
+		float update(float ax, float ay, float az);
+
+		int getSelectedAxis();
 };
 
 #endif

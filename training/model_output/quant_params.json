@@ -1,0 +1,15 @@
+{
+  "input_scale": 0.06681548804044724,
+  "input_zp": -3,
+  "output_scale": 0.00390625,
+  "output_zp": -128,
+  "classes": [
+    "bicep_curl",
+    "idle",
+    "lateral_raise",
+    "shoulder_press",
+    "tricep_ext"
+  ],
+  "window_size": 150,
+  "n_axes": 6
+}

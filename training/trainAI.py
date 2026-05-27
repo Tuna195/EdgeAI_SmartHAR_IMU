@@ -12,7 +12,15 @@ Cách chạy:
 """
 
 import os
+import sys
+
+# Buộc stdout/stderr dùng UTF-8 trên Windows (tránh lỗi cp1252 với ký tự đặc biệt)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import json
+import time
 import warnings
 import numpy as np
 import pandas as pd
@@ -240,18 +248,6 @@ def augment_time_shift(window: np.ndarray) -> np.ndarray:
     shift = np.random.randint(-CFG["shift_max"], CFG["shift_max"] + 1)
     return np.roll(window, shift, axis=0).astype(np.float32)
 
-
-def augment_axis_flip(window: np.ndarray) -> np.ndarray:
-    """
-    Lật ngẫu nhiên 1 trong 3 trục gia tốc (ax/ay/az).
-    Giả lập đeo thiết bị ở tay trái hoặc góc khác.
-    """
-    axis = np.random.randint(0, 3)          # chỉ flip ax, ay, az
-    result = window.copy()
-    result[:, axis] = -result[:, axis]
-    return result.astype(np.float32)
-
-
 def augment_dataset(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Tạo aug_factor bản augment cho mỗi window gốc.
@@ -262,7 +258,7 @@ def augment_dataset(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarra
     print("="*55)
 
     aug_fns = [augment_jitter, augment_scaling,
-               augment_time_shift, augment_axis_flip]
+               augment_time_shift]
 
     X_aug_list = [X]
     y_aug_list = [y]
@@ -382,7 +378,7 @@ def train(model: tf.keras.Model,
 # ─────────────────────────────────────────────────────────────
 def evaluate(model: tf.keras.Model,
              X_val: np.ndarray, y_val: np.ndarray,
-             history: tf.keras.callbacks.History):
+             history: tf.keras.callbacks.History) -> tuple[float, dict]:
 
     print("\n" + "="*55)
     print("  BƯỚC 4: EVALUATION")
@@ -390,12 +386,22 @@ def evaluate(model: tf.keras.Model,
 
     y_pred = np.argmax(model.predict(X_val, verbose=0), axis=1)
 
+    # ── Classification Report ────────────────────────────────
+    report_str = classification_report(y_val, y_pred,
+                                       target_names=CFG["classes"])
     print("\n📊 Classification Report:")
-    print(classification_report(y_val, y_pred,
-                                target_names=CFG["classes"]))
+    print(report_str)
 
     val_acc = np.mean(y_pred == y_val)
     print(f"✅ Val Accuracy: {val_acc*100:.2f}%")
+
+    # ── Per-class accuracy ───────────────────────────────────
+    per_class_acc = {}
+    for i, cls in enumerate(CFG["classes"]):
+        mask = (y_val == i)
+        per_class_acc[cls] = float(
+            np.mean(y_pred[mask] == y_val[mask]) if mask.sum() > 0 else 0.0
+        )
 
     # ── Plot 1: Training curves ──────────────────────────────
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
@@ -437,7 +443,34 @@ def evaluate(model: tf.keras.Model,
     plt.close()
     print(f"📊 Confusion matrix → {cm_path}")
 
-    return val_acc
+    # ── Plot 3: Per-class accuracy bar chart ─────────────────
+    fig, ax = plt.subplots(figsize=(8, 4))
+    classes_list = list(per_class_acc.keys())
+    accs_pct     = [per_class_acc[c] * 100 for c in classes_list]
+    bar_colors   = ["#2ecc71" if a >= 90 else "#f39c12" if a >= 75 else "#e74c3c"
+                    for a in accs_pct]
+    bars = ax.barh(classes_list, accs_pct, color=bar_colors)
+    ax.set_xlim(0, 110)
+    ax.set_xlabel("Accuracy (%)")
+    ax.set_title("Per-Class Accuracy", fontsize=13, fontweight="bold")
+    for bar, acc in zip(bars, accs_pct):
+        ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height() / 2,
+                f"{acc:.1f}%", va="center", fontsize=10)
+    ax.axvline(90, color="gray", linestyle="--", alpha=0.5, label="90% line")
+    ax.legend()
+    ax.grid(axis="x", alpha=0.3)
+    plt.tight_layout()
+    pc_path = Path(CFG["output_dir"]) / "per_class_accuracy.png"
+    plt.savefig(pc_path, dpi=120)
+    plt.close()
+    print(f"📊 Per-class accuracy → {pc_path}")
+
+    return val_acc, {
+        "val_acc"      : float(val_acc),
+        "per_class_acc": per_class_acc,
+        "report_str"   : report_str,
+        "epochs_run"   : len(history.history["loss"]),
+    }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -531,6 +564,84 @@ def export_tflite(model: tf.keras.Model,
     with open(quant_path, "w") as f:
         json.dump(quant_info, f, indent=2)
     print(f"\n✅ Quant params → {quant_path}")
+    return size_kb
+
+
+# ─────────────────────────────────────────────────────────────
+# 7b. SAVE TRAINING REPORT
+# ─────────────────────────────────────────────────────────────
+def save_training_report(report_info: dict,
+                         n_train: int, n_val: int,
+                         t_start: float,
+                         tflite_size_kb: float | None = None):
+    """
+    Tổng hợp toàn bộ số liệu cần cho báo cáo vào training_report.txt.
+    Đồng thời in đầy đủ ra terminal để theo dõi trực tiếp.
+    """
+    duration_min = (time.time() - t_start) / 60
+    timestamp    = time.strftime("%Y-%m-%d %H:%M:%S")
+    sep          = "═" * 55
+
+    lines = [
+        sep,
+        "  GestureNet — TRAINING REPORT",
+        f"  Generated  : {timestamp}",
+        sep, "",
+        "[ DATASET ]",
+        f"  Classes      : {', '.join(CFG['classes'])}",
+        f"  Window size  : {CFG['window_size']} samples ({CFG['window_size'] / 50:.1f}s @ 50Hz)",
+        f"  Train windows: {n_train:,}  |  Val windows: {n_val:,}",
+        f"  Augmentation : jitter / scaling / time_shift  (aug_factor={CFG['aug_factor']})",
+        "",
+        "[ TRAINING ]",
+        f"  Epochs run   : {report_info['epochs_run']} / {CFG['epochs']}",
+        f"  Training time: {duration_min:.1f} min",
+        f"  Best val acc : {report_info['val_acc'] * 100:.2f}%",
+        "",
+        "[ CLASSIFICATION REPORT ]",
+        report_info["report_str"],
+        "[ PER-CLASS ACCURACY ]",
+    ]
+
+    for cls, acc in report_info["per_class_acc"].items():
+        bar  = "█" * int(acc * 20)
+        flag = "✅" if acc >= 0.90 else "⚠️ " if acc >= 0.75 else "❌"
+        lines.append(f"  {flag} {cls:20s}: {acc * 100:5.1f}%  {bar}")
+
+    lines.append("")
+
+    if tflite_size_kb is not None:
+        lines += [
+            "[ MODEL SIZE ]",
+            f"  TFLite int8  : {tflite_size_kb:.1f} KB",
+            "",
+        ]
+
+    lines += [
+        "[ OUTPUT FILES ]",
+        "  training_curves.png    — Learning curves (Loss & Accuracy)",
+        "  confusion_matrix.png   — Confusion matrix",
+        "  per_class_accuracy.png — Per-class accuracy bar chart",
+        "  model.tflite           — Quantized int8 model for ESP32-S3",
+        "  scaler_params.json     — Z-score normalization params",
+        "  quant_params.json      — TFLite quantization params",
+        "",
+        sep,
+    ]
+
+    report_text = "\n".join(lines)
+
+    # In ra terminal
+    print("\n" + "─" * 55)
+    print("  📄 TRAINING REPORT SUMMARY")
+    print("─" * 55)
+    print(report_text)
+
+    # Lưu file
+    report_path = Path(CFG["output_dir"]) / "training_report.txt"
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(report_text + "\n")
+    print(f"\n✅ Training report → {report_path}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -563,7 +674,6 @@ def main():
     # ── BƯỚC 2: Normalize — fit trên RAW Train, transform cả hai ──
     #
     #    ⚠️  PHẢI normalize TRƯỚC khi augment, không phải sau.
-    #    Lý do: augment_axis_flip lật dấu trục Z (1.0g → -1.0g).
     #    Nếu normalize SAU augment, mean_Z bị kéo về ~0 (nửa +1, nửa -1),
     #    ghi nhận sai vào scaler_params.json → firmware tính offset sai → model sụp.
     #    Normalize trên X_train_RAW đảm bảo mean/std phản ánh đúng vật lý cảm biến.
@@ -574,27 +684,34 @@ def main():
     print(f"\n📂 After normalize — Train: {X_train_norm.shape} | Val: {X_val.shape}")
 
     # ── BƯỚC 3: Augment CHỈ trên X_train_norm ────────────────
-    #    Jitter / Scaling / TimeShift / AxisFlip trên dữ liệu đã Z-score
+    #    Jitter / Scaling / TimeShift trên dữ liệu đã Z-score
     #    hoàn toàn hợp lệ — chỉ là nhiễu tương đối, không ảnh hưởng mean/std thật.
     #    Val không được augment — đại diện cho data thực tế firmware gửi lên.
     X_train, y_train = augment_dataset(X_train_norm, y_train)
     print(f"📂 After augment  — Train: {X_train.shape} | Val: {X_val.shape}")
 
     # ── Build & Train ────────────────────────────────────────
-    model = build_model(n_classes=len(CFG["classes"]))
+    model   = build_model(n_classes=len(CFG["classes"]))
+    t_start = time.time()
     history = train(model, X_train, y_train, X_val, y_val)
 
     # ── Evaluate ─────────────────────────────────────────────
-    val_acc = evaluate(model, X_val, y_val, history)
+    val_acc, report_info = evaluate(model, X_val, y_val, history)
 
     # ── Export ───────────────────────────────────────────────
+    tflite_kb = None
     if val_acc >= 0.85:
-        export_tflite(model, X_val)
+        tflite_kb = export_tflite(model, X_val)
     else:
         print(f"\n⚠️  Val accuracy {val_acc*100:.1f}% < 85% — chưa export TFLite.")
         print("   Gợi ý: thu thêm data hoặc tăng aug_factor trong CFG.")
-        # Vẫn lưu Keras model để debug
         model.save(Path(CFG["output_dir"]) / "model_low_acc.keras")
+
+    # ── Training Report ──────────────────────────────────────
+    save_training_report(report_info,
+                         n_train=len(X_train), n_val=len(X_val),
+                         t_start=t_start,
+                         tflite_size_kb=tflite_kb)
 
     # ── Summary ──────────────────────────────────────────────
     print("\n" + "█"*55)

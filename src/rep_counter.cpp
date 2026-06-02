@@ -1,7 +1,8 @@
 // rep_counter.cpp
 // ─────────────────────────────────────────────────────────────
-// Triển khai Phase 1 — Rep Counter Components (v2 — Adaptive)
-// Thuật toán khớp 100% với training/rep_sim.py (AdaptiveDetector).
+// Phase 1 — Rep Counter (v3 — Multi-axis + Majority-Vote)
+//   RepDetector : Adaptive Schmitt 1 trục (giữ nguyên thuật toán v2).
+//   RepTracker  : vote chọn bài + +1-khi-classify + đếm peak trên trục bài đó.
 // ─────────────────────────────────────────────────────────────
 
 #include "rep_counter.h"
@@ -9,21 +10,17 @@
 #include <cstring>  // memset
 
 // ═════════════════════════════════════════════════════════════
-// 1. RepDetector — Adaptive Schmitt
+// 1. RepDetector — Adaptive Schmitt (1 trục cố định)
 // ═════════════════════════════════════════════════════════════
-//
-// Mỗi sample:
 //   centered  = val - dc_ema          (khử DC chậm → loại trôi tư thế/gravity)
-//   rectified = |centered|
-//   envelope  = trung bình trượt 0.5s của rectified   (ước lượng biên độ)
-//   T         = max(k * envelope, T_min)               (ngưỡng tự thích nghi)
+//   centered  = MA ngắn (làm mượt)     (chống rung tần số cao → 1 đỉnh/nhịp)
+//   envelope  = MA 0.5s của |centered| (ước lượng biên độ)
+//   env_peak  = peak-hold của envelope (giữ cao suốt set → chống đếm wobble)
+//   T         = max(k * env_peak, T_min)
 //   Schmitt   : vượt +T rồi xuống dưới -T  ⇒  1 chu kỳ dao động = 1 rep
-//
-// Vì T tỉ lệ biên độ tức thời nên detector co giãn theo từng buổi/tay,
-// đếm đúng 1 lần/rep kể cả khi vận động liên tục (envelope không tụt về 0).
 
 RepDetector::RepDetector() {
-    axis_ = 4;  // mặc định gy (chỉ là khởi tạo; configure() sẽ đặt lại)
+    axis_ = 4;  // gy mặc định
     reset();
 }
 
@@ -54,9 +51,7 @@ bool RepDetector::update(const float norm_axes[6]) {
     float val = norm_axes[axis_];
 
     // ── Bước 1: DC removal ───────────────────────────────────
-    // 0.5s đầu (đang nạp MA): baseline = trung bình cộng dồn → settle NHANH,
-    // tránh lệch do init bằng 1 mẫu giữa nhịp (gây miss/sai nhịp đầu).
-    // Sau đó: slow EMA (τ≈3s) chỉ khử trôi tư thế.
+    // 0.5s đầu: baseline = trung bình cộng dồn → settle nhanh; sau đó slow EMA.
     if (ma_count_ < PD_MA_WIN) {
         warmup_sum_ += val;
         dc_ema_      = warmup_sum_ / (float)(ma_count_ + 1);
@@ -65,7 +60,7 @@ bool RepDetector::update(const float norm_axes[6]) {
     }
     float centered_raw = val - dc_ema_;
 
-    // ── Bước 1b: Làm mượt centered (MA ngắn) → chống rung → 1 đỉnh/nhịp ──
+    // ── Bước 1b: Làm mượt centered (MA ngắn) ─────────────────
     if (sm_count_ < PD_SMOOTH_WIN) {
         sm_buf_[sm_count_] = centered_raw;
         sm_sum_           += centered_raw;
@@ -96,150 +91,122 @@ bool RepDetector::update(const float norm_axes[6]) {
     }
 
     // ── Bước 3: Ngưỡng thích nghi (peak-hold) ────────────────
-    // T bám theo ĐỈNH biên độ (giữ cao suốt set), không tụt giữa 2 nhịp
-    // → dao động nhỏ (wobble) giữa nhịp không vượt ngưỡng → hết đếm dư.
     if (envelope_ > env_peak_) env_peak_ = envelope_;
     else                       env_peak_ *= PD_PEAK_DECAY;
     T_ = PD_K_BAND * env_peak_;
     if (T_ < PD_T_MIN) T_ = PD_T_MIN;
 
-    // ── Bước 4: Schmitt trigger trên tín hiệu đã khử DC ──────
+    // ── Bước 4: Schmitt trigger ──────────────────────────────
     if (!above_ && centered > T_) {
-        above_ = true;   // vào nửa trên của chu kỳ
+        above_ = true;
         return false;
     }
     if (above_ && centered < -T_) {
-        above_ = false;  // hoàn thành 1 chu kỳ
-        return true;     // ← REP EVENT
+        above_ = false;
+        return true;     // ← REP EVENT (1 chu kỳ đầy đủ)
     }
     return false;
 }
 
 // ═════════════════════════════════════════════════════════════
-// 2. StateMachine
+// 2. RepTracker — vote chọn bài + đếm
 // ═════════════════════════════════════════════════════════════
 
-StateMachine::StateMachine() { reset(); }
+RepTracker::RepTracker() { reset(); }
 
-void StateMachine::reset() {
-    state_          = HarState::IDLE;
-    active_class_   = -1;
-    state_changed_  = false;
-    confirm_class_  = -1;
-    confirm_streak_ = 0;
-    exit_counter_   = 0;
-    trans_start_ms_ = 0;
-}
-
-int StateMachine::getCountingClass() const {
-    // ACTIVE và TRANSITIONING đều còn đang trong 1 set (TRANS có thể là false
-    // alarm → quay lại ACTIVE) ⇒ vẫn đếm cho active_class_.
-    if (state_ == HarState::ACTIVE ||
-        state_ == HarState::TRANSITIONING) return active_class_;
-    if (confirm_streak_ > 0)               return confirm_class_;  // đang gom streak
-    return -1;
-}
-
-HarState StateMachine::update(int class_index, float confidence,
-                               uint32_t timestamp_ms) {
-    state_changed_ = false;
-
-    switch (state_) {
-
-    // ── IDLE: chờ N inference liên tiếp cùng class (non-idle) ─
-    case HarState::IDLE:
-        if (class_index != IDLE_CLASS_INDEX && confidence >= SM_MIN_CONF) {
-            if (class_index == confirm_class_) {
-                confirm_streak_++;
-            } else {
-                confirm_class_  = class_index;
-                confirm_streak_ = 1;
-            }
-            if (confirm_streak_ >= SM_CONFIRM_N) {
-                state_          = HarState::ACTIVE;
-                active_class_   = confirm_class_;
-                state_changed_  = true;
-                exit_counter_   = 0;
-                confirm_streak_ = 0;
-            }
-        } else {
-            // idle hoặc confidence thấp → phá streak
-            confirm_class_  = -1;
-            confirm_streak_ = 0;
-        }
-        break;
-
-    // ── ACTIVE: ổn định hoặc phát hiện exit ───────────────────
-    case HarState::ACTIVE:
-        if (class_index == active_class_ && confidence >= SM_MIN_CONF) {
-            exit_counter_ = 0;  // inference ổn định, tiếp tục set
-        } else {
-            exit_counter_++;
-            if (exit_counter_ >= SM_EXIT_M) {
-                state_          = HarState::TRANSITIONING;
-                trans_start_ms_ = timestamp_ms;
-                state_changed_  = true;
-            }
-        }
-        break;
-
-    // ── TRANSITIONING: false alarm hoặc confirm IDLE ──────────
-    case HarState::TRANSITIONING:
-        if (class_index == active_class_ && confidence >= SM_MIN_CONF) {
-            // False alarm — quay lại ACTIVE (người dùng chưa nghỉ thật)
-            state_         = HarState::ACTIVE;
-            state_changed_ = true;
-            exit_counter_  = 0;
-        } else if ((timestamp_ms - trans_start_ms_) >= SM_CONFIRM_IDLE_MS) {
-            // Đã qua 3s mà không quay lại → xác nhận nghỉ
-            state_          = HarState::IDLE;
-            active_class_   = -1;
-            state_changed_  = true;
-            confirm_class_  = -1;
-            confirm_streak_ = 0;
-        }
-        break;
-    }
-
-    return state_;
-}
-
-// ═════════════════════════════════════════════════════════════
-// 3. RepValidator (debounce + retro-count)
-// ═════════════════════════════════════════════════════════════
-
-RepValidator::RepValidator() { reset(); }
-
-void RepValidator::reset() {
-    rep_count_   = 0;
-    pending_     = 0;
+void RepTracker::reset() {
+    vote_head_  = 0;
+    vote_count_ = 0;
+    for (int i = 0; i < RT_VOTE_N; i++) vote_buf_[i] = IDLE_CLASS_INDEX;
+    committed_   = -1;
+    last_infer_  = IDLE_CLASS_INDEX;
+    commit_ts_   = 0;
     last_rep_ms_ = 0;
+    for (int i = 0; i < NUM_EXERCISE_CLASSES; i++) {
+        rep_count_[i]      = 0;
+        first_credited_[i] = false;
+    }
+    committed_changed_ = false;
+    ended_class_       = -1;
+    ended_count_       = 0;
 }
 
-bool RepValidator::onPeak(uint32_t timestamp_ms, bool active, bool counting,
-                          uint32_t min_gap_ms) {
-    // Chỉ tính khi có một bài tập đang được counting (streak hoặc active).
-    if (!counting) return false;
-
-    // Debounce — tránh đếm nhiều rep từ 1 đỉnh nhiễu.
-    if (last_rep_ms_ != 0 && (timestamp_ms - last_rep_ms_) < min_gap_ms) {
-        return false;
+int RepTracker::voteWinner(int &winner_count) const {
+    int counts[NUM_EXERCISE_CLASSES] = {0};
+    for (int i = 0; i < vote_count_; i++) {
+        int c = vote_buf_[i];
+        if (c >= 0 && c < NUM_EXERCISE_CLASSES) counts[c]++;
     }
-    last_rep_ms_ = timestamp_ms;
-
-    if (active) {
-        rep_count_++;   // đã ACTIVE → tính ngay
-    } else {
-        pending_++;     // đang chờ xác nhận → tạm giữ (sẽ commit khi ACTIVE)
+    int best = IDLE_CLASS_INDEX, best_n = -1;
+    for (int c = 0; c < NUM_EXERCISE_CLASSES; c++) {
+        if (counts[c] > best_n) { best_n = counts[c]; best = c; }
     }
+    winner_count = best_n;
+    return best;
+}
+
+void RepTracker::endCommittedSet() {
+    if (committed_ < 0) return;
+    ended_class_ = committed_;
+    ended_count_ = rep_count_[committed_];
+    rep_count_[committed_]      = 0;
+    first_credited_[committed_] = false;
+    committed_ = -1;
+}
+
+void RepTracker::onInference(int class_index, float confidence, uint32_t ts_ms) {
+    committed_changed_ = false;
+    ended_class_       = -1;
+
+    // conf thấp → coi như idle (no-exercise) cho cả vote lẫn cổng đếm.
+    int v = (confidence >= RT_MIN_CONF) ? class_index : IDLE_CLASS_INDEX;
+    last_infer_ = v;
+
+    // Đẩy vào cửa sổ vote (ring).
+    vote_buf_[vote_head_] = v;
+    vote_head_ = (vote_head_ + 1) % RT_VOTE_N;
+    if (vote_count_ < RT_VOTE_N) vote_count_++;
+
+    int wcount = 0;
+    int winner = voteWinner(wcount);
+    if (wcount < RT_VOTE_M) return;   // chưa ai áp đảo → giữ nguyên
+
+    if (winner == IDLE_CLASS_INDEX) {
+        // Nghỉ áp đảo → kết thúc set hiện tại (nếu có).
+        if (committed_ >= 0) {
+            endCommittedSet();
+            committed_changed_ = true;
+        }
+        return;
+    }
+
+    // winner là 1 bài tập.
+    if (winner != committed_) {
+        endCommittedSet();          // kết thúc bài cũ (nếu có) → ghi ended_*
+        committed_ = winner;
+        if (!first_credited_[winner]) {
+            rep_count_[winner]      = 1;   // +1 "rep-classify" (cửa sổ 3s ≈ 1 rep)
+            first_credited_[winner] = true;
+        }
+        commit_ts_   = ts_ms;
+        last_rep_ms_ = ts_ms;        // chặn đếm đôi ngay sau khi chốt
+        committed_changed_ = true;
+    }
+}
+
+bool RepTracker::onPeak(uint8_t axis, uint32_t ts_ms) {
+    if (committed_ < 0) return false;
+    const ExerciseConfig *cfg = getExerciseConfig(committed_);
+    if (!cfg) return false;
+
+    if (axis != cfg->best_axis)   return false;  // sai trục bài đang đếm
+    if (last_infer_ != committed_) return false;  // không chắc đang làm bài này
+    if (ts_ms <= commit_ts_)       return false;  // chỉ tính sau khi chốt (bỏ peak buildup)
+
+    // Debounce: peak dồn < min_gap (tập quá nhanh / nhiễu) → coi sai form, bỏ.
+    if (last_rep_ms_ != 0 && (ts_ms - last_rep_ms_) < cfg->min_gap_ms) return false;
+
+    last_rep_ms_ = ts_ms;
+    rep_count_[committed_]++;
     return true;
-}
-
-void RepValidator::commitPending() {
-    rep_count_ += pending_;
-    pending_    = 0;
-}
-
-void RepValidator::resetPending() {
-    pending_ = 0;
 }

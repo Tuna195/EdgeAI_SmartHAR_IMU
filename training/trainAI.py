@@ -29,7 +29,7 @@ import seaborn as sns
 import tensorflow as tf
 
 from pathlib import Path
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit
 from sklearn.metrics import classification_report, confusion_matrix
 from tensorflow.keras import layers, models, callbacks
 
@@ -61,6 +61,16 @@ CFG = {
     "jitter_std"    : 0.05,     # nhiễu Gaussian
     "scale_range"   : (0.9, 1.1),
     "shift_max"     : 10,       # samples (time shift)
+
+    # Rotation augmentation (raw-space, TRƯỚC normalize) — robust hướng đeo
+    # Xoay proper (det +1) áp CÙNG ma trận cho accel & gyro (đều là 3-vector).
+    # max_deg lớn (vd 180) phủ cả "chip ra ngoài" ≈ xoay 180° quanh cẳng tay.
+    #
+    # Mức VỪA PHẢI (90°): thêm dung sai cho sai khác cách đeo/tập (vd bicep có
+    # xoay cổ tay) để model nhận ra, nhưng KHÔNG quá mạnh như 180° (gộp lẫn
+    # tricep/bicep). 0 = tắt hẳn (đeo cực kỳ cố định).
+    "rot_factor"    : 2,        # số bản xoay thêm cho mỗi window (0 = tắt)
+    "rot_max_deg"   : 90.0,     # biên độ góc xoay (±) quanh trục ngẫu nhiên
 
     # Training
     "test_size"     : 0.20,
@@ -131,16 +141,20 @@ def sliding_window(data: np.ndarray, label: int) -> tuple[list, list]:
     return windows, labels
 
 
-def load_all_data() -> tuple[np.ndarray, np.ndarray]:
+def load_all_data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Load toàn bộ data từ CFG["data_dir"], chỉ lấy các class trong CFG["classes"].
-    Trả về X shape (N, 150, 6) và y shape (N,).
+    Trả về X (N, 150, 6), y (N,), groups (N,) = id FILE của mỗi window.
+
+    groups dùng để chia train/val THEO FILE (không để window cùng 1 file rơi
+    vào cả 2 phía → tránh rò rỉ session làm accuracy ảo).
     """
     print("\n" + "="*55)
     print("  BƯỚC 1: LOAD DATA & SLIDING WINDOW")
     print("="*55)
 
-    all_windows, all_labels = [], []
+    all_windows, all_labels, all_groups = [], [], []
+    file_id = 0  # id duy nhất cho mỗi file (xuyên suốt mọi class)
 
     for label_idx, class_name in enumerate(CFG["classes"]):
         class_dir = Path(CFG["data_dir"]) / class_name
@@ -153,7 +167,7 @@ def load_all_data() -> tuple[np.ndarray, np.ndarray]:
             print(f"\n⚠️  Không có file CSV trong: {class_dir}")
             continue
 
-        class_windows, class_labels = [], []
+        class_count = 0
         print(f"\n[{label_idx}] {class_name} ({len(csv_files)} files):")
 
         for csv_path in csv_files:
@@ -162,20 +176,22 @@ def load_all_data() -> tuple[np.ndarray, np.ndarray]:
                 continue
 
             wins, labs = sliding_window(data, label_idx)
-            class_windows.extend(wins)
-            class_labels.extend(labs)
+            all_windows.extend(wins)
+            all_labels.extend(labs)
+            all_groups.extend([file_id] * len(wins))  # mọi window của file này cùng group
+            file_id += 1
+            class_count += len(wins)
             print(f"      ✅ {csv_path.name:30s} → {len(wins):3d} windows")
 
-        print(f"      → Tổng: {len(class_windows)} windows cho class '{class_name}'")
-        all_windows.extend(class_windows)
-        all_labels.extend(class_labels)
+        print(f"      → Tổng: {class_count} windows cho class '{class_name}'")
 
     X = np.array(all_windows, dtype=np.float32)  # (N, 150, 6)
     y = np.array(all_labels,  dtype=np.int32)     # (N,)
+    groups = np.array(all_groups, dtype=np.int32)  # (N,)
 
-    print(f"\n📦 Dataset gốc: {X.shape} | Labels: {y.shape}")
+    print(f"\n📦 Dataset gốc: {X.shape} | Labels: {y.shape} | Files: {file_id}")
     _print_class_distribution(y, "Phân bố trước augmentation")
-    return X, y
+    return X, y, groups
 
 
 def _print_class_distribution(y: np.ndarray, title: str = ""):
@@ -188,43 +204,93 @@ def _print_class_distribution(y: np.ndarray, title: str = ""):
 
 
 # ─────────────────────────────────────────────────────────────
-# 2. Z-SCORE NORMALIZATION
+# 2. Z-SCORE NORMALIZATION  (fit / apply tách riêng)
 # ─────────────────────────────────────────────────────────────
-def normalize(X_train: np.ndarray,
-              X_val:   np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
+def fit_scaler(X_train_raw: np.ndarray, save: bool = True) -> tuple[np.ndarray, np.ndarray, dict]:
     """
-    Z-score normalization — đúng thứ tự, không Data Leakage.
-
-    Nguyên tắc:
-      - mean & std được FIT CHỈ trên X_train (Val không tham gia tính toán).
-      - X_val chỉ được TRANSFORM bằng mean/std của Train.
-      - Đảm bảo Val là "người lạ hoàn toàn" — phản ánh đúng năng lực thật.
+    Tính mean/std CHỈ trên X_train_raw GỐC (chip-hướng-vào thật) → khớp với
+    dữ liệu firmware gặp lúc inference. KHÔNG fit trên bản đã rotation-augment
+    (sẽ làm scaler "trung bình hoá hướng" → lệch với deployment thật).
     """
-    # mean/std shape (6,) — chỉ tính từ Train set
-    mean = X_train.reshape(-1, 6).mean(axis=0)
-    std  = X_train.reshape(-1, 6).std(axis=0)
+    mean = X_train_raw.reshape(-1, 6).mean(axis=0)
+    std  = X_train_raw.reshape(-1, 6).std(axis=0)
     std  = np.where(std == 0, 1e-8, std)   # tránh chia 0
 
-    # Transform cả hai bằng CÙNG một scaler
-    X_train_norm = (X_train - mean) / std
-    X_val_norm   = (X_val   - mean) / std
-
-    scaler_params = {
-        "mean": mean.tolist(),
-        "std" : std.tolist(),
-        "axes": CFG["columns"],
-    }
-
-    scaler_path = Path(CFG["output_dir"]) / "scaler_params.json"
-    with open(scaler_path, "w") as f:
-        json.dump(scaler_params, f, indent=2)
-
-    print(f"\n✅ Scaler params đã lưu: {scaler_path}")
+    scaler_params = {"mean": mean.tolist(), "std": std.tolist(), "axes": CFG["columns"]}
+    if save:
+        scaler_path = Path(CFG["output_dir"]) / "scaler_params.json"
+        with open(scaler_path, "w") as f:
+            json.dump(scaler_params, f, indent=2)
+        print(f"\n✅ Scaler params đã lưu: {scaler_path}")
     print(f"   mean = {[f'{v:.4f}' for v in mean.tolist()]}")
     print(f"   std  = {[f'{v:.4f}' for v in std.tolist()]}")
-    print(f"   Fit trên {len(X_train):,} Train windows — Val không tham gia.")
+    print(f"   Fit trên {len(X_train_raw):,} window GỐC (chưa rotate, chưa augment).")
+    return mean, std, scaler_params
 
-    return X_train_norm, X_val_norm, scaler_params
+
+def apply_scaler(X_raw: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    """z = (x - mean) / std — dùng đúng scaler đã fit trên train gốc."""
+    return (X_raw - mean) / std
+
+
+# ─────────────────────────────────────────────────────────────
+# 2b. ROTATION AUGMENTATION (raw-space, TRƯỚC normalize)
+# ─────────────────────────────────────────────────────────────
+def _rot_matrix(axis: np.ndarray, angle: float) -> np.ndarray:
+    """Ma trận xoay 3x3 (Rodrigues) — proper rotation, det = +1."""
+    n = np.linalg.norm(axis)
+    if n < 1e-9:
+        return np.eye(3, dtype=np.float32)
+    x, y, z = axis / n
+    c, s = np.cos(angle), np.sin(angle)
+    C = 1.0 - c
+    return np.array([
+        [c + x*x*C,   x*y*C - z*s, x*z*C + y*s],
+        [y*x*C + z*s, c + y*y*C,   y*z*C - x*s],
+        [z*x*C - y*s, z*y*C + x*s, c + z*z*C],
+    ], dtype=np.float32)
+
+
+def augment_rotation(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Sinh rot_factor bản XOAY cho mỗi window (giữ cả bản gốc).
+    Áp CÙNG ma trận xoay R cho bộ 3 accel [0:3] và bộ 3 gyro [3:6] — đúng vật lý
+    (cả hai là 3-vector dưới proper rotation; KHÔNG dùng cho phản chiếu trái/phải).
+    Mô phỏng lệch/đổi hướng đeo (gồm "chip ra ngoài" ≈ xoay ~180°) mà KHÔNG cần data mới.
+    """
+    factor = CFG.get("rot_factor", 0)
+    if factor <= 0:
+        return X, y
+
+    max_rad = np.deg2rad(CFG.get("rot_max_deg", 180.0))
+    # CHỈ xoay các BÀI TẬP, KHÔNG xoay idle: tránh class idle "phình to" (idle ở
+    # mọi hướng) nuốt mất bài tập (nhất là bicep yếu).
+    idle_idx = CFG["classes"].index("idle") if "idle" in CFG["classes"] else -1
+    ex_mask = (y != idle_idx)
+    X_ex, y_ex = X[ex_mask], y[ex_mask]
+
+    print("\n" + "="*55)
+    print("  BƯỚC 1b: ROTATION AUGMENTATION (raw) — CHỈ bài tập, KHÔNG idle")
+    print("="*55)
+    print(f"  Xoay {len(X_ex)}/{len(X)} window (bỏ {np.sum(~ex_mask)} window idle)")
+
+    out_X, out_y = [X], [y]  # giữ TẤT CẢ bản gốc (gồm idle)
+    for p in range(factor):
+        Xr = np.empty_like(X_ex)
+        for i in range(len(X_ex)):
+            axis = np.random.normal(size=3)
+            angle = np.random.uniform(-max_rad, max_rad)
+            R = _rot_matrix(axis, angle)
+            Xr[i, :, 0:3] = X_ex[i, :, 0:3] @ R.T   # accel
+            Xr[i, :, 3:6] = X_ex[i, :, 3:6] @ R.T   # gyro
+        out_X.append(Xr)
+        out_y.append(y_ex)
+        print(f"  Rotate pass {p+1}/{factor}: +{len(Xr)} window bài tập (±{CFG['rot_max_deg']}°)")
+
+    X_out = np.concatenate(out_X, axis=0)
+    y_out = np.concatenate(out_y, axis=0)
+    print(f"\n📦 Sau rotation: {X_out.shape}")
+    return X_out, y_out
 
 
 # ─────────────────────────────────────────────────────────────
@@ -653,39 +719,48 @@ def main():
     print("  Target: ESP32-S3 | TFLite Micro")
     print("█"*55)
 
-    # ── Load raw data ────────────────────────────────────────
-    X_raw, y_raw = load_all_data()
+    # ── Load raw data (kèm group = id file) ──────────────────
+    X_raw, y_raw, groups_raw = load_all_data()
 
     if len(X_raw) == 0:
         print("\n❌ Không có data nào được load! Kiểm tra lại thư mục data/")
         return
 
-    # ── BƯỚC 1: Split TRƯỚC — Val được cô lập ngay từ đầu ───
-    #    Augmentation và Normalization chưa được chạy ở đây.
-    #    Val set sẽ không tham gia vào bất kỳ phép tính thống kê nào.
-    X_train_raw, X_val_raw, y_train, y_val = train_test_split(
-        X_raw, y_raw,
-        test_size=CFG["test_size"],
-        random_state=CFG["seed"],
-        stratify=y_raw,
-    )
-    print(f"\n📂 Raw split — Train: {X_train_raw.shape} | Val: {X_val_raw.shape}")
+    # ── BƯỚC 1: Split THEO FILE — Val là file HOÀN TOÀN LẠ ───
+    #    Dùng GroupShuffleSplit để KHÔNG window nào của cùng 1 file rơi vào
+    #    cả train lẫn val. Tránh rò rỉ session (window chồng 50% + cùng buổi/
+    #    người/hướng đeo) — vốn làm accuracy bị thổi phồng lên ~100% giả tạo.
+    #    Augmentation & Normalization vẫn chạy sau, chỉ trên train.
+    gss = GroupShuffleSplit(n_splits=1, test_size=CFG["test_size"],
+                            random_state=CFG["seed"])
+    train_idx, val_idx = next(gss.split(X_raw, y_raw, groups_raw))
+    X_train_raw, X_val_raw = X_raw[train_idx], X_raw[val_idx]
+    y_train, y_val = y_raw[train_idx], y_raw[val_idx]
+    n_val_files = len(np.unique(groups_raw[val_idx]))
+    print(f"\n📂 Split theo file — Train: {X_train_raw.shape} | "
+          f"Val: {X_val_raw.shape} ({n_val_files} file lạ)")
+    _print_class_distribution(y_val, "Phân bố Val (theo file)")
 
-    # ── BƯỚC 2: Normalize — fit trên RAW Train, transform cả hai ──
-    #
-    #    ⚠️  PHẢI normalize TRƯỚC khi augment, không phải sau.
-    #    Nếu normalize SAU augment, mean_Z bị kéo về ~0 (nửa +1, nửa -1),
-    #    ghi nhận sai vào scaler_params.json → firmware tính offset sai → model sụp.
-    #    Normalize trên X_train_RAW đảm bảo mean/std phản ánh đúng vật lý cảm biến.
+    # ── BƯỚC 2: FIT SCALER trên RAW Train GỐC ────────────────
+    #    ⚠️  Fit mean/std trên train GỐC (chưa rotate) để scaler khớp với dữ
+    #    liệu firmware gặp thật (chip-hướng-vào). Lưu scaler_params.json ở đây.
     print("\n" + "="*55)
-    print("  NORMALIZATION  (fit=X_train_raw, trước augmentation)")
+    print("  NORMALIZATION  (fit scaler = X_train_raw GỐC)")
     print("="*55)
-    X_train_norm, X_val, scaler_params = normalize(X_train_raw, X_val_raw)
+    mean, std, _ = fit_scaler(X_train_raw)
+
+    # ── BƯỚC 2b: ROTATION AUGMENT trên RAW (chỉ train; val giữ nguyên) ──
+    #    Xoay proper trên raw accel+gyro → robust hướng đeo. Phải ở RAW-space
+    #    (xoay sau Z-score sẽ méo vì mỗi trục bị scale khác nhau).
+    X_train_raw, y_train = augment_rotation(X_train_raw, y_train)
+
+    # ── BƯỚC 2c: APPLY scaler (transform cả train-đã-rotate lẫn val) ──
+    X_train_norm = apply_scaler(X_train_raw, mean, std)
+    X_val        = apply_scaler(X_val_raw,   mean, std)
     print(f"\n📂 After normalize — Train: {X_train_norm.shape} | Val: {X_val.shape}")
 
-    # ── BƯỚC 3: Augment CHỈ trên X_train_norm ────────────────
-    #    Jitter / Scaling / TimeShift trên dữ liệu đã Z-score
-    #    hoàn toàn hợp lệ — chỉ là nhiễu tương đối, không ảnh hưởng mean/std thật.
+    # ── BƯỚC 3: Augment (jitter/scale/shift) CHỈ trên X_train_norm ──
+    #    Trên dữ liệu đã Z-score — chỉ là nhiễu tương đối, không đụng scaler.
     #    Val không được augment — đại diện cho data thực tế firmware gửi lên.
     X_train, y_train = augment_dataset(X_train_norm, y_train)
     print(f"📂 After augment  — Train: {X_train.shape} | Val: {X_val.shape}")

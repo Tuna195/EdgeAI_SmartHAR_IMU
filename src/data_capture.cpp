@@ -9,7 +9,6 @@
 #include <SPIFFS.h>
 
 BMI270 imu;
-EMAFilter filter_ax, filter_ay, filter_az, filter_gx, filter_gy, filter_gz;
 const int LED_PIN = LED_BUILTIN;
 
 // NUS UUIDs
@@ -209,12 +208,13 @@ void loop() {
 
   imu.getSensorData();
 
-  float ax = filter_ax.filter(imu.data.accelX);
-  float ay = filter_ay.filter(imu.data.accelY);
-  float az = filter_az.filter(imu.data.accelZ);
-  float gx = filter_gx.filter(imu.data.gyroX);
-  float gy = filter_gy.filter(imu.data.gyroY);
-  float gz = filter_gz.filter(imu.data.gyroZ);
+  // Ghi RAW (KHÔNG EMA) — khớp domain với training & inference (đều dùng raw).
+  float ax = imu.data.accelX;
+  float ay = imu.data.accelY;
+  float az = imu.data.accelZ;
+  float gx = imu.data.gyroX;
+  float gy = imu.data.gyroY;
+  float gz = imu.data.gyroZ;
 
   unsigned long timestamp = sampleCount * SAMPLING_PERIOD_MS;
   dataFile.print(timestamp);

@@ -17,28 +17,28 @@ static constexpr int  HAR_NUM_CLASSES = 5;     // số class output
 // ─── Z-Score params (fit trên X_train_raw — vật lý thật) ─────
 //     KHÔNG được thay đổi thứ tự: [ax, ay, az, gx, gy, gz]
 static constexpr float HAR_MEAN[6] = {
-  0.20692605f,  // [0] ax — mean
-  0.03507961f,  // [1] ay — mean
-  -0.06117149f,  // [2] az — mean
-  -0.37449342f,  // [3] gx — mean
-  0.43596172f,  // [4] gy — mean
-  -0.23395501f,  // [5] gz — mean
+  0.15883821f,  // [0] ax — mean
+  0.01432643f,  // [1] ay — mean
+  -0.02781012f,  // [2] az — mean
+  -0.44101688f,  // [3] gx — mean
+  0.47294450f,  // [4] gy — mean
+  -0.21489604f,  // [5] gz — mean
 };
 
 // inv_std = 1.0f / std  →  dùng phép nhân thay vì chia trên MCU
 static constexpr float HAR_INV_STD[6] = {
-  1.47908871f,  // [0] ax — 1/std (pre-computed)
-  1.90756312f,  // [1] ay — 1/std (pre-computed)
-  2.07995609f,  // [2] az — 1/std (pre-computed)
-  0.04455285f,  // [3] gx — 1/std (pre-computed)
-  0.02430581f,  // [4] gy — 1/std (pre-computed)
-  0.02931264f,  // [5] gz — 1/std (pre-computed)
+  1.48762882f,  // [0] ax — 1/std (pre-computed)
+  1.90575035f,  // [1] ay — 1/std (pre-computed)
+  1.96947049f,  // [2] az — 1/std (pre-computed)
+  0.04014855f,  // [3] gx — 1/std (pre-computed)
+  0.02478677f,  // [4] gy — 1/std (pre-computed)
+  0.02976099f,  // [5] gz — 1/std (pre-computed)
 };
 
 // ─── TFLite Int8 Quantization params ─────────────────────────
 //     Dùng để: float_z → int8 (input), int8 → float prob (output)
-static constexpr float   HAR_INPUT_SCALE      = 0.05586085f;
-static constexpr int32_t HAR_INPUT_ZERO_POINT = -18;
+static constexpr float   HAR_INPUT_SCALE      = 0.09810095f;
+static constexpr int32_t HAR_INPUT_ZERO_POINT = -9;
 static constexpr float   HAR_OUTPUT_SCALE     = 0.00390625f;
 static constexpr int32_t HAR_OUTPUT_ZERO_POINT= -128;
 

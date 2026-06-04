@@ -1,18 +1,11 @@
 #ifndef DATA_CAPTURE_MODE
 // main.cpp — rebuild/rep-detection
 // ═══════════════════════════════════════════════════════════════
-// Classify (single-core) + REP DETECTOR PEAKDET (Billauer, delta).
+// Classify (single-core) + REP DETECTOR TỐI GIẢN (Schmitt ngưỡng cố định).
 //
-// Gate đơn giản: classifier ra bài X (conf>0.80) → đếm rep của X (trục + delta
-// của X); ra idle → chốt set (in tổng, reset). idle do CLASSIFIER loại bỏ,
-// detector KHÔNG tự lọc idle (xem rep_detector.h / sim_peakdet.py).
-//
-// Detector = RepDetector (peakdet) — mirror 1:1 training/sim_peakdet.py, đã
-// verify C++≡Python 100% trên toàn bộ CSV. Tune trục/delta ở EXCFG bên dưới
-// (đồng bộ training/rep_config.py).
-//
-// Build BLE data-capture: bật cờ -D DATA_CAPTURE_MODE (platformio.ini) → file
-// này tắt, src/data_capture.cpp (BLE NUS + SPIFFS) chạy thay.
+// Gate đơn giản nhất: classifier ra bài X → đếm rep của X (trục gyro của X);
+// ra idle → chốt set (in tổng, reset). Chưa vote/pending gì cả — thêm sau
+// nếu cần. Mục tiêu: nhìn rõ detector chạy đúng không.
 // ═══════════════════════════════════════════════════════════════
 
 #include "SparkFun_BMI270_Arduino_Library.h"
@@ -25,26 +18,20 @@
 BMI270 imu;
 
 static const unsigned long SAMPLING_PERIOD_MS = 20;   // 50Hz
+static unsigned long previousMillis = 0;
 
-// ── Cấu hình per-bài (đồng bộ training/rep_config.py) ──────────
+// ── Cấu hình per-bài (dễ tune): trục gyro + ngưỡng T + debounce ──
 // Index theo class: 0 bicep, 1 idle, 2 lateral, 3 shoulder, 4 tricep
-// Trục: ax=0 ay=1 az=2 gx=3 gy=4 gz=5
-//   bicep/lateral = gy(4) ; shoulder/tricep = ay(1)
-struct ExCfg {
-    uint8_t  axis;
-    float    delta;
-    uint32_t min_gap_ms;
-    uint8_t  smooth_win;
-    uint32_t reset_timeout_ms;
-    float    min_abs;
-};
+// Trục: gx=3, gy=4, gz=5  (bicep/lateral=gy, shoulder=gx, tricep=gz)
+struct ExCfg { uint8_t axis; float T; uint32_t min_gap_ms; };
 static const int IDLE_IDX = 1;
+// T = min(T_trái, T_phải) suy từ data (analyze_axes.py) → tay yếu không miss.
 static const ExCfg EXCFG[HAR_NUM_CLASSES] = {
-    {4, 1.0f, 600, 5, 3000, 0.0f},  // [0] bicep_curl     gy
-    {0, 0.0f,   0, 1,    0, 0.0f},  // [1] idle (không dùng)
-    {4, 1.0f, 600, 5, 3000, 0.0f},  // [2] lateral_raise  gy
-    {1, 0.5f, 600, 5, 3000, 0.0f},  // [3] shoulder_press ay (tín hiệu yếu)
-    {1, 0.9f, 600, 5, 3000, 0.0f},  // [4] tricep_ext     ay
+    {4, 0.5f, 2000},  // [0] bicep_curl    gy  (trái yếu → T thấp)
+    {0, 0.0f,    0},  // [1] idle (không dùng)
+    {4, 0.8f,  850},  // [2] lateral_raise gy
+    {3, 0.6f, 1910},  // [3] shoulder_press gx (tín hiệu yếu)
+    {5, 1.1f,  970},  // [4] tricep_ext    gz
 };
 static inline bool isExercise(int c) {
     return c >= 0 && c < HAR_NUM_CLASSES && c != IDLE_IDX;
@@ -61,8 +48,6 @@ static int   sample_count   = 0;
 static int   stride_counter = 0;
 static const int STRIDE = HAR_WINDOW_SIZE / 2;        // 75 mẫu (1.5s)
 
-static unsigned long previousMillis = 0;
-
 void setup() {
   Serial.begin(115200);
   delay(3000);
@@ -71,17 +56,17 @@ void setup() {
   delay(100);
 
   if (imu.beginI2C(0x68) != BMI2_OK) {
-    Serial.println("LOI: Khong the khoi tao BMI270!");
+    Serial.println("❌ LỖI: Không thể khởi tạo BMI270!");
     while (1)
       ;
   }
   if (!harInit()) {
-    Serial.println("LOI: Khoi tao AI (TFLite) that bai!");
+    Serial.println("❌ LỖI: Khởi tạo AI (TFLite) thất bại!");
     while (1)
       ;
   }
   harPrintModelInfo();
-  Serial.println("Classify + rep detector (PEAKDET). Bat dau...");
+  Serial.println("✅ Classify + rep detector (nguong co dinh). Bat dau...");
 }
 
 void loop() {
@@ -93,7 +78,7 @@ void loop() {
   const float raw6[6] = {imu.data.accelX, imu.data.accelY, imu.data.accelZ,
                          imu.data.gyroX,  imu.data.gyroY,  imu.data.gyroZ};
 
-  // Z-score mỗi sample (dùng cho detector — đơn vị chuẩn hoá, khớp norm_params).
+  // Z-score mỗi sample (dùng cho detector — đơn vị chuẩn hoá).
   float z6[6];
   for (int j = 0; j < HAR_NUM_AXES; j++)
     z6[j] = (raw6[j] - HAR_MEAN[j]) * HAR_INV_STD[j];
@@ -101,7 +86,8 @@ void loop() {
   // ── Đếm rep: chỉ khi đang trong 1 bài tập ──
   if (cur_ex >= 0 && detector.update(z6, currentMillis)) {
     rep_count++;
-    Serial.printf("REP! [%s] count: %d\n", HAR_CLASS_NAMES[cur_ex], rep_count);
+    Serial.printf("\xF0\x9F\x92\xAA REP! [%s] count: %d\n",
+                  HAR_CLASS_NAMES[cur_ex], rep_count);
   }
 
   // ── Nạp ring buffer (RAW) cho inference ──
@@ -129,7 +115,7 @@ void loop() {
   }
 
   if (result.confidence > 0.80f)
-    Serial.printf("%-15s %5.1f%%\n", result.class_name,
+    Serial.printf("\xF0\x9F\x8F\x8B %-15s %5.1f%%\n", result.class_name,
                   result.confidence * 100.0f);
 
   // ── Gate đơn giản: đổi bài / chốt set theo classifier ──
@@ -143,10 +129,10 @@ void loop() {
       cur_ex    = result.class_index;
       rep_count = 0;
       const ExCfg &c = EXCFG[cur_ex];
-      detector.configure(c.axis, c.delta, c.min_gap_ms, c.smooth_win,
-                         c.reset_timeout_ms, c.min_abs);
-      Serial.printf("[SET] bat dau %s (truc=%d, delta=%.2f)\n",
-                    HAR_CLASS_NAMES[cur_ex], c.axis, c.delta);
+      detector.configure(c.axis, c.T, c.min_gap_ms);
+      detector.reset();
+      Serial.printf("[SET] bat dau %s (truc gyro=%d)\n",
+                    HAR_CLASS_NAMES[cur_ex], c.axis);
     }
   } else {                                   // idle → chốt set
     if (cur_ex >= 0) {

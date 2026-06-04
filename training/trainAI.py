@@ -69,8 +69,8 @@ CFG = {
     # kỳ sẽ ÁNH XẠ gy↔gz↔gx → gộp lẫn bicep/tricep/lateral (đã quan sát thực tế).
     # → Chỉ cho lệch NHẸ ±15° (dung sai đeo hơi xê dịch) mà KHÔNG conflate trục.
     # 0 = tắt hẳn (đeo cực kỳ cố định).
-    "rot_factor"    : 1,        # số bản xoay thêm cho mỗi window (0 = tắt)
-    "rot_max_deg"   : 15.0,     # biên độ góc xoay (±) quanh trục ngẫu nhiên — NHẸ
+    "rot_factor"    : 0,        # TẮT rotation aug (đeo cố định 1 hướng → boundary sắc nhất)
+    "rot_max_deg"   : 15.0,     # (không dùng khi rot_factor=0)
 
     # Training
     "test_size"     : 0.20,
@@ -407,12 +407,7 @@ def train(model: tf.keras.Model,
     model.summary()
 
     cb_list = [
-        callbacks.EarlyStopping(
-            monitor="val_accuracy",
-            patience=CFG["patience"],
-            restore_best_weights=True,
-            verbose=1,
-        ),
+        # NOTE: EarlyStopping ĐÃ BỎ — train đủ CFG["epochs"] (model deploy = epoch cuối).
         callbacks.ReduceLROnPlateau(
             monitor="val_loss",
             factor=0.5,

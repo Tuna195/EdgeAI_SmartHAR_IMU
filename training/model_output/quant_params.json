@@ -1,6 +1,6 @@
 {
-  "input_scale": 0.09810095280408859,
-  "input_zp": -9,
+  "input_scale": 0.09378476440906525,
+  "input_zp": -11,
   "output_scale": 0.00390625,
   "output_zp": -128,
   "classes": [

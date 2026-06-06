@@ -24,7 +24,7 @@ public:
     // axis: 0..5 (ax,ay,az,gx,gy,gz). delta/min_abs: z-units.
     void configure(uint8_t axis, float delta, uint32_t min_gap_ms,
                    uint8_t smooth_win, uint32_t reset_timeout_ms,
-                   float min_abs = 0.0f) {
+                   float min_abs = 0.0f, uint32_t min_swing_ms = 0) {
         axis_             = axis;
         delta_            = delta;
         min_gap_ms_       = min_gap_ms;
@@ -32,6 +32,7 @@ public:
                           : (smooth_win > MAX_SMOOTH ? MAX_SMOOTH : smooth_win);
         reset_timeout_ms_ = reset_timeout_ms;
         min_abs_          = min_abs;
+        min_swing_ms_     = min_swing_ms;   // 0 = tắt. Chống nhún nhanh (anti-cheat).
         reset();
     }
 
@@ -42,6 +43,7 @@ public:
         e1_type_ = 0; saw_e1_ = false;                     // counter
         have_last_rep_ = false; last_rep_ms_ = 0;
         have_last_ev_  = false; last_ev_ms_  = 0;
+        last_swing_ms_ = 0;
     }
 
     // z6[6] = 6 trục đã Z-score. Trả về true khi đếm được 1 rep.
@@ -86,6 +88,7 @@ public:
         if (have_last_ev_ && (ev_ms - last_ev_ms_) > reset_timeout_ms_) {
             e1_type_ = 0; saw_e1_ = false;       // nghỉ quá lâu → reset pha
         }
+        uint32_t prev_ev_ms = last_ev_ms_;       // mốc cực TRƯỚC (cho min_swing)
         last_ev_ms_ = ev_ms; have_last_ev_ = true;
 
         if (e1_type_ == 0) { e1_type_ = ev; saw_e1_ = true; return false; }
@@ -93,9 +96,13 @@ public:
         if (saw_e1_) {
             if (ev != e1_type_) {                // chạm cực ĐỐI → xong 1 chu kỳ
                 saw_e1_ = false;
-                if (!have_last_rep_ || (ev_ms - last_rep_ms_) >= min_gap_ms_) {
+                uint32_t swing = ev_ms - prev_ev_ms;   // đáy→đỉnh kéo dài bao lâu
+                bool gap_ok   = !have_last_rep_ || (ev_ms - last_rep_ms_) >= min_gap_ms_;
+                bool swing_ok = (min_swing_ms_ == 0) || (swing >= min_swing_ms_);
+                if (gap_ok && swing_ok) {        // đủ cách + đủ CHẬM → 1 REP
                     last_rep_ms_ = ev_ms; have_last_rep_ = true;
-                    return true;                 // ← 1 REP
+                    last_swing_ms_ = swing;
+                    return true;
                 }
             }
         } else {
@@ -104,7 +111,8 @@ public:
         return false;
     }
 
-    uint8_t axis() const { return axis_; }
+    uint8_t  axis() const { return axis_; }
+    uint32_t lastSwingMs() const { return last_swing_ms_; }   // debug/tune
 
 private:
     static const int MAX_SMOOTH = 32;
@@ -116,6 +124,7 @@ private:
     uint8_t  smooth_win_       = 5;
     uint32_t reset_timeout_ms_ = 3000;
     float    min_abs_          = 0.0f;
+    uint32_t min_swing_ms_     = 0;
 
     // smoothing
     float sm_buf_[MAX_SMOOTH];
@@ -135,4 +144,5 @@ private:
     uint32_t last_rep_ms_   = 0;
     bool     have_last_ev_  = false;
     uint32_t last_ev_ms_    = 0;
+    uint32_t last_swing_ms_ = 0;
 };

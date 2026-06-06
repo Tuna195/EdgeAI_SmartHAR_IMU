@@ -1,24 +1,23 @@
 #ifndef DATA_CAPTURE_MODE
 // main.cpp — rebuild/rep-detection
 // ═══════════════════════════════════════════════════════════════
-// Classify (single-core) + REP DETECTOR PEAKDET (Billauer, delta).
+// Classify (single-core) + RepTracker (state machine + 3 detector PEAKDET).
 //
-// Gate đơn giản: classifier ra bài X (conf>0.80) → đếm rep của X (trục + delta
-// của X); ra idle → chốt set (in tổng, reset). idle do CLASSIFIER loại bỏ,
-// detector KHÔNG tự lọc idle (xem rep_detector.h / sim_peakdet.py).
+// RepTracker (src/rep_tracker.h):
+//   • IDLE→bài (conf>0.80): commit, +1 rep lead-in, khởi động 3 detector.
+//   • ACTIVE: 3 detector always-warm đếm song song; switch bài bằng vote 3/4
+//     trong ≤3 rep đầu (sửa sai khởi đầu, không mất rep); idle 3 window → chốt set.
+//   • idle do CLASSIFIER loại; detector chỉ chạy khi ACTIVE.
 //
-// Detector = RepDetector (peakdet) — mirror 1:1 training/sim_peakdet.py, đã
-// verify C++≡Python 100% trên toàn bộ CSV. Tune trục/delta ở EXCFG bên dưới
-// (đồng bộ training/rep_config.py).
-//
-// Build BLE data-capture: bật cờ -D DATA_CAPTURE_MODE (platformio.ini) → file
-// này tắt, src/data_capture.cpp (BLE NUS + SPIFFS) chạy thay.
+// Detector PEAKDET verify C++≡Python 100% (training/sim_peakdet.py).
+// Build BLE data-capture: -D DATA_CAPTURE_MODE (xem src/data_capture.cpp).
+// TODO Stage 2: BLE GATT notify gói tuyệt đối [activity,conf,rep,set,ts].
 // ═══════════════════════════════════════════════════════════════
 
 #include "SparkFun_BMI270_Arduino_Library.h"
 #include "ai_inference.h"
 #include "norm_params.h"
-#include "rep_detector.h"
+#include "rep_tracker.h"
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -26,33 +25,7 @@ BMI270 imu;
 
 static const unsigned long SAMPLING_PERIOD_MS = 20;   // 50Hz
 
-// ── Cấu hình per-bài (đồng bộ training/rep_config.py) ──────────
-// Index theo class: 0 bicep, 1 idle, 2 lateral, 3 shoulder, 4 tricep
-// Trục: ax=0 ay=1 az=2 gx=3 gy=4 gz=5
-//   bicep/lateral = gy(4) ; shoulder/tricep = ay(1)
-struct ExCfg {
-    uint8_t  axis;
-    float    delta;
-    uint32_t min_gap_ms;
-    uint8_t  smooth_win;
-    uint32_t reset_timeout_ms;
-    float    min_abs;
-};
-static const int IDLE_IDX = 1;
-static const ExCfg EXCFG[HAR_NUM_CLASSES] = {
-    {4, 1.0f, 600, 5, 3000, 0.0f},  // [0] bicep_curl     gy
-    {0, 0.0f,   0, 1,    0, 0.0f},  // [1] idle (không dùng)
-    {4, 1.0f, 600, 5, 3000, 0.0f},  // [2] lateral_raise  gy
-    {1, 0.5f, 600, 5, 3000, 0.0f},  // [3] shoulder_press ay (tín hiệu yếu)
-    {1, 0.9f, 600, 5, 3000, 0.0f},  // [4] tricep_ext     ay
-};
-static inline bool isExercise(int c) {
-    return c >= 0 && c < HAR_NUM_CLASSES && c != IDLE_IDX;
-}
-
-RepDetector detector;
-int cur_ex    = -1;   // bài đang đếm (-1 = không)
-int rep_count = 0;
+RepTracker tracker;
 
 // ── Ring buffer cho inference (RAW) ──
 static float ring_buf[HAR_WINDOW_SIZE][HAR_NUM_AXES];
@@ -81,7 +54,8 @@ void setup() {
       ;
   }
   harPrintModelInfo();
-  Serial.println("Classify + rep detector (PEAKDET). Bat dau...");
+  tracker.reset();
+  Serial.println("Classify + RepTracker (PEAKDET + vote). Bat dau...");
 }
 
 void loop() {
@@ -93,15 +67,23 @@ void loop() {
   const float raw6[6] = {imu.data.accelX, imu.data.accelY, imu.data.accelZ,
                          imu.data.gyroX,  imu.data.gyroY,  imu.data.gyroZ};
 
-  // Z-score mỗi sample (dùng cho detector — đơn vị chuẩn hoá, khớp norm_params).
+  // Z-score mỗi sample (đơn vị chuẩn hoá, khớp norm_params) → detector.
   float z6[6];
   for (int j = 0; j < HAR_NUM_AXES; j++)
     z6[j] = (raw6[j] - HAR_MEAN[j]) * HAR_INV_STD[j];
 
-  // ── Đếm rep: chỉ khi đang trong 1 bài tập ──
-  if (cur_ex >= 0 && detector.update(z6, currentMillis)) {
-    rep_count++;
-    Serial.printf("REP! [%s] count: %d\n", HAR_CLASS_NAMES[cur_ex], rep_count);
+  // ── Đếm rep (detector chạy bên trong tracker, chỉ khi ACTIVE) ──
+  // z6 cho peakdet (bicep/lateral/tricep), raw6 cho world-vertical (shoulder).
+  if (tracker.onSample(z6, raw6, currentMillis)) {
+    if (tracker.committed() == 3)   // shoulder_press: in up/down ms để tune min_phase
+      Serial.printf("REP! [%s] count: %d (up=%lums down=%lums)\n",
+                    HAR_CLASS_NAMES[tracker.committed()], tracker.repDisplay(),
+                    (unsigned long)tracker.lastShoulderUpMs(),
+                    (unsigned long)tracker.lastShoulderDownMs());
+    else
+      Serial.printf("REP! [%s] count: %d (swing=%lums)\n",
+                    HAR_CLASS_NAMES[tracker.committed()], tracker.repDisplay(),
+                    (unsigned long)tracker.lastSwingMs());
   }
 
   // ── Nạp ring buffer (RAW) cho inference ──
@@ -132,29 +114,25 @@ void loop() {
     Serial.printf("%-15s %5.1f%%\n", result.class_name,
                   result.confidence * 100.0f);
 
-  // ── Gate đơn giản: đổi bài / chốt set theo classifier ──
-  if (result.confidence <= 0.80f) return;   // không chắc → bỏ qua
-
-  if (isExercise(result.class_index)) {
-    if (result.class_index != cur_ex) {     // bắt đầu bài mới
-      if (cur_ex >= 0)
-        Serial.printf("[SET] doi bai (%s: %d reps)\n",
-                      HAR_CLASS_NAMES[cur_ex], rep_count);
-      cur_ex    = result.class_index;
-      rep_count = 0;
-      const ExCfg &c = EXCFG[cur_ex];
-      detector.configure(c.axis, c.delta, c.min_gap_ms, c.smooth_win,
-                         c.reset_timeout_ms, c.min_abs);
-      Serial.printf("[SET] bat dau %s (truc=%d, delta=%.2f)\n",
-                    HAR_CLASS_NAMES[cur_ex], c.axis, c.delta);
-    }
-  } else {                                   // idle → chốt set
-    if (cur_ex >= 0) {
-      Serial.printf("[SET] xong %s: %d reps\n", HAR_CLASS_NAMES[cur_ex],
-                    rep_count);
-      cur_ex    = -1;
-      rep_count = 0;
-    }
+  // ── State machine: commit / switch / chốt set ──
+  RepTracker::Event ev =
+      tracker.onInference(result.class_index, result.confidence, currentMillis);
+  switch (ev) {
+    case RepTracker::COMMITTED:
+      Serial.printf("[SET %d] bat dau %s (+1 rep lead-in)\n",
+                    tracker.setNo(), HAR_CLASS_NAMES[tracker.committed()]);
+      break;
+    case RepTracker::SWITCHED:
+      Serial.printf("[SET %d] sua sai -> %s (rep=%d)\n",
+                    tracker.setNo(), HAR_CLASS_NAMES[tracker.committed()],
+                    tracker.repDisplay());
+      break;
+    case RepTracker::SET_CLOSED:
+      Serial.printf("[SET %d] xong: %d reps\n",
+                    tracker.setNo(), tracker.closedReps());
+      break;
+    default:
+      break;
   }
 }
 #endif

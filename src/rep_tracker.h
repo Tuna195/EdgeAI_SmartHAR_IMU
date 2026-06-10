@@ -6,11 +6,10 @@
 //   (2) Khoá bài (stickiness) + cho SỬA SAI khởi đầu trong ≤3 rep đầu bằng
 //       vote M/K, KHÔNG mất rep nhờ 3 detector always-warm tích luỹ từ set start.
 //
-// Mapping class→detector (4 detector — bicep TÁCH RIÊNG, dùng trục ax accel):
-//   bicep(0) → D0 ax/1.0 | shoulder(3) → D1 ay/0.5 | tricep(4) → D2 ay/0.9 |
-//   lateral(2) → D3 gy/1.0
-//   (bicep đổi gy→ax vì gy đếm DƯ real-time: xoay/giật nhẹ sinh swing gy. ax ít
-//    nhạy hơn; ay chết, az double-count → ax là trục accel duy nhất dùng được.)
+// Mapping class→detector: bicep(0)→D0, tricep(4)→D1, lateral(2)→D2;
+// shoulder(3) → world-vertical (wv_, raw). Trục/delta: xem configDetectors()
+// (nguồn chân lý duy nhất). 3 bài xoay dùng ax (gy đếm DƯ real-time: xoay/giật
+// nhẹ cũng sinh swing gy; ay chết, az double-count).
 //
 // Cadence: onSample() mỗi mẫu (50Hz) chạy detector; onInference() mỗi 1.5s
 // chạy state machine. idle do CLASSIFIER loại (detector chỉ chạy khi ACTIVE).
@@ -45,12 +44,11 @@ public:
     bool onSample(const float z6[6], const float raw6[6], uint32_t now_ms) {
         if (state_ != ACTIVE) return false;
         bool committed_fired = false;
-        // 3 bài xoay (bicep/lateral/tricep) + shoulder-peakdet cũ vẫn warm (bỏ qua).
+        // 3 bài xoay (bicep/tricep/lateral) — always-warm.
         for (int i = 0; i < N_DET; i++) {
             if (dets_[i].update(z6, now_ms)) {
                 det_count_[i]++;
-                if (i == detOf(committed_) && committed_ != SHOULDER_CLS)
-                    committed_fired = true;
+                if (i == detOf(committed_)) committed_fired = true;
             }
         }
         // shoulder_press dùng WORLD-VERTICAL (raw), không phải peakdet ay.
@@ -109,20 +107,18 @@ private:
     // class index: 0 bicep, 1 idle, 2 lateral, 3 shoulder, 4 tricep
     static constexpr int IDLE_IDX     = 1;
     static constexpr int SHOULDER_CLS = 3;   // dùng world-vertical thay peakdet
-    static int  detOf(int cls) {                       // -1 nếu idle/không hợp lệ
-        static const int8_t M[5] = {0, -1, 3, 1, 2};  // bicep→D0 lateral→D3 shoulder→D1 tricep→D2
+    static int  detOf(int cls) {                       // -1 nếu idle/shoulder/không hợp lệ
+        static const int8_t M[5] = {0, -1, 2, -1, 1}; // bicep→D0 tricep→D1 lateral→D2 (shoulder→wv_)
         return (cls >= 0 && cls < 5) ? M[cls] : -1;
     }
     static bool isExercise(int c) { return c >= 0 && c < 5 && c != IDLE_IDX; }
 
     void configDetectors() {
-        // D0 ax/1.0 (bicep, accel — gy đếm dư), D1 ay/0.5 (shoulder),
-        // D2 ay/0.9 (tricep), D3 gy/1.0 (lateral)
-        // 3 bài xoay: thêm min_swing_ms=500 (anti-nhún: swing đáy→đỉnh phải ≥500ms).
-        dets_[0].configure(0, 2.0f, 600, 5, 3000, 0.0f, /*min_swing_ms*/ 500);
-        dets_[1].configure(1, 0.8f, 600, 5, 3000, 0.0f);   // shoulder peakdet (KHÔNG dùng)
-        dets_[2].configure(0, 1.1f, 600, 5, 3000, 0.0f, /*min_swing_ms*/ 500);
-        dets_[3].configure(0, 1.3f, 600, 5, 3000, 0.0f, /*min_swing_ms*/ 500);
+        // configure(axis, delta, min_gap_ms, smooth_win, reset_timeout_ms, min_abs[, min_swing_ms])
+        // min_swing_ms=500: anti-nhún — swing đáy→đỉnh phải ≥500ms mới tính rep.
+        dets_[0].configure(0, 2.0f, 600, 5, 3000, 0.0f, /*min_swing_ms*/ 500);   // bicep: ax
+        dets_[1].configure(0, 1.1f, 600, 5, 3000, 0.0f, /*min_swing_ms*/ 500);   // tricep: ax
+        dets_[2].configure(0, 1.3f, 600, 5, 3000, 0.0f, /*min_swing_ms*/ 500);   // lateral: ax
         for (int i = 0; i < N_DET; i++) det_count_[i] = 0;
         // shoulder_press: world-vertical (raw). Đếm theo DURATION nửa nhịp (anti-nhún):
         // pha lên đủ dài RỒI pha xuống đủ dài = 1 rep. min_phase=450ms loại nhún
@@ -153,14 +149,14 @@ private:
         int n = 0; for (int i = 0; i < VOTE_K; i++) if (vote_[i] == cls) n++; return n;
     }
 
-    static constexpr int N_DET = 4;                    // bicep,shoulder,tricep,lateral
+    static constexpr int N_DET = 3;                    // bicep,tricep,lateral (shoulder = wv_)
 
     State        state_      = IDLE;
     int          committed_  = -1;
     int          set_no_     = 0;
     int          closed_reps_= 0;
     RepDetector       dets_[N_DET];
-    int               det_count_[N_DET] = {0, 0, 0, 0};
+    int               det_count_[N_DET] = {0, 0, 0};
     WorldVertDetector wv_;                 // shoulder_press (raw, world-vertical)
     int               wv_count_ = 0;
     int8_t       vote_[VOTE_K] = {-1, -1, -1, -1};

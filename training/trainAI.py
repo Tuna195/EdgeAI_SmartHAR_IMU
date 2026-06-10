@@ -44,7 +44,7 @@ CFG = {
     "data_dir"      : "data",
     "output_dir"    : "model_output",
 
-    # Classes — pushup & running bị bỏ qua tự động
+    # Classes
     "classes"       : ["bicep_curl", "idle", "lateral_raise",
                        "shoulder_press", "tricep_ext"],
 
@@ -362,7 +362,6 @@ def augment_dataset(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarra
 def build_model(n_classes: int) -> tf.keras.Model:
     """
     1D-CNN tối ưu cho TinyML / ESP32-S3.
-    Flash ~25-35KB | Peak SRAM ~12-18KB | Inference <30ms
     """
     inp = layers.Input(shape=(CFG["window_size"], len(CFG["columns"])),
                        name="imu_input")

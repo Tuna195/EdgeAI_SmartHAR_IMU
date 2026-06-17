@@ -8,10 +8,12 @@ __pycache__/
 *.csv
 *.txt
 *.md
-
+scripts
 # Cache and build tools
 .cache/
 compile_commands.json
 *.npy
 *.h5
 docs
+saved/
+*.ipynb

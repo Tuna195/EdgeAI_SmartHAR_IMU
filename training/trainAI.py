@@ -44,7 +44,7 @@ CFG = {
     "data_dir"      : "data",
     "output_dir"    : "model_output",
 
-    # Classes — pushup & running bị bỏ qua tự động
+    # Classes
     "classes"       : ["bicep_curl", "idle", "lateral_raise",
                        "shoulder_press", "tricep_ext"],
 
@@ -62,15 +62,15 @@ CFG = {
     "scale_range"   : (0.9, 1.1),
     "shift_max"     : 10,       # samples (time shift)
 
-    # Rotation augmentation (raw-space, TRƯỚC normalize) — robust hướng đeo
+    # Rotation augmentation (raw-space, TRƯỚC normalize) — DUNG SAI lệch đeo NHẸ.
     # Xoay proper (det +1) áp CÙNG ma trận cho accel & gyro (đều là 3-vector).
-    # max_deg lớn (vd 180) phủ cả "chip ra ngoài" ≈ xoay 180° quanh cẳng tay.
     #
-    # Mức VỪA PHẢI (90°): thêm dung sai cho sai khác cách đeo/tập (vd bicep có
-    # xoay cổ tay) để model nhận ra, nhưng KHÔNG quá mạnh như 180° (gộp lẫn
-    # tricep/bicep). 0 = tắt hẳn (đeo cực kỳ cố định).
-    "rot_factor"    : 2,        # số bản xoay thêm cho mỗi window (0 = tắt)
-    "rot_max_deg"   : 90.0,     # biên độ góc xoay (±) quanh trục ngẫu nhiên
+    # ⚠️ Premise dự án = hướng đeo CỐ ĐỊNH. Góc lớn (90°/180°) xoay quanh trục bất
+    # kỳ sẽ ÁNH XẠ gy↔gz↔gx → gộp lẫn bicep/tricep/lateral (đã quan sát thực tế).
+    # → Chỉ cho lệch NHẸ ±15° (dung sai đeo hơi xê dịch) mà KHÔNG conflate trục.
+    # 0 = tắt hẳn (đeo cực kỳ cố định).
+    "rot_factor"    : 0,        # TẮT rotation aug (đeo cố định 1 hướng → boundary sắc nhất)
+    "rot_max_deg"   : 15.0,     # (không dùng khi rot_factor=0)
 
     # Training
     "test_size"     : 0.20,
@@ -362,7 +362,6 @@ def augment_dataset(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarra
 def build_model(n_classes: int) -> tf.keras.Model:
     """
     1D-CNN tối ưu cho TinyML / ESP32-S3.
-    Flash ~25-35KB | Peak SRAM ~12-18KB | Inference <30ms
     """
     inp = layers.Input(shape=(CFG["window_size"], len(CFG["columns"])),
                        name="imu_input")
@@ -407,12 +406,7 @@ def train(model: tf.keras.Model,
     model.summary()
 
     cb_list = [
-        callbacks.EarlyStopping(
-            monitor="val_accuracy",
-            patience=CFG["patience"],
-            restore_best_weights=True,
-            verbose=1,
-        ),
+        # NOTE: EarlyStopping ĐÃ BỎ — train đủ CFG["epochs"] (model deploy = epoch cuối).
         callbacks.ReduceLROnPlateau(
             monitor="val_loss",
             factor=0.5,

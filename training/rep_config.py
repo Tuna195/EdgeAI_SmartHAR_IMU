@@ -32,21 +32,23 @@ AXES = ['ax', 'ay', 'az', 'gx', 'gy', 'gz']
 FS = 50.0  # Hz
 
 # Z-score params — COPY tu src/norm_params.h (thu tu ax,ay,az,gx,gy,gz)
-HAR_MEAN = [0.15883821, 0.01432643, -0.02781012,
-            -0.44101688, 0.47294450, -0.21489604]
-HAR_INV_STD = [1.48762882, 1.90575035, 1.96947049,
-               0.04014855, 0.02478677, 0.02976099]
+# Sync 2026-06-10 sau retrain (+bicep_curl_11/12 tay trai). ax doi -0.6% -> delta giu nguyen.
+HAR_MEAN = [0.19319834, 0.09219834, -0.07000402,
+            -0.53266954, 0.50996107, -0.24726500]
+HAR_INV_STD = [1.47866009, 1.90167912, 2.10224535,
+               0.04501920, 0.02296352, 0.02855940]
 
 # ─── Config per-bai ──────────────────────────────────────────
 # delta khoi diem (se tune); BAN dua truc chinh -> cap nhat 'axis'.
 REP_CONFIG = {
-    # gy: bicep_curl_01 = 20 rep (ground truth), on dinh ca dai delta 0.5..1.5.
-    # (Da thu ax: file_01=19 va lateral-ax tay TRAI ~0 -> gy tot hon han.)
-    'bicep_curl':     dict(axis=4, delta=1.0, min_gap_ms=600, smooth_win=5, reset_timeout_ms=3000, min_abs=0.0),
-    'lateral_raise':  dict(axis=4, delta=1.0, min_gap_ms=600, smooth_win=5, reset_timeout_ms=3000, min_abs=0.0),
+    # ax (accel): gy DEM DU real-time (test tren board) - xoay/giat nhe cung sinh
+    # swing gy. Chuyen sang ax: it nhay voi cu dong nhe hon. ax plateau phang
+    # 0.3..1.6 (dem ~19), khong double-count. (ay chet, az double-count -> loai.)
+    'bicep_curl':     dict(axis=0, delta=2.5, min_gap_ms=600, smooth_win=5, reset_timeout_ms=3000, min_abs=0.0),
+    'lateral_raise':  dict(axis=0, delta=2.5, min_gap_ms=600, smooth_win=5, reset_timeout_ms=3000, min_abs=0.0),
     # ay: tot hon han gx cu. PHAI dem ~20 sach; TRAI bien do YEU (shoulder it xoay)
     # nen delta phai thap 0.5 va TRAI van hoi under-count (gioi han vat ly).
-    'shoulder_press': dict(axis=1, delta=0.5, min_gap_ms=600, smooth_win=5, reset_timeout_ms=3000, min_abs=0.0),
+    'shoulder_press': dict(axis=1, delta=1.0, min_gap_ms=600, smooth_win=5, reset_timeout_ms=3000, min_abs=0.0),
     # ay: plateau rat phang 0.5..1.5 -> chon 0.9 (bien chong nhieu tot).
-    'tricep_ext':     dict(axis=1, delta=0.9, min_gap_ms=600, smooth_win=5, reset_timeout_ms=3000, min_abs=0.0),
+    'tricep_ext':     dict(axis=0, delta=1.4, min_gap_ms=600, smooth_win=5, reset_timeout_ms=3000, min_abs=0.0),
 }

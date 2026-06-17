@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EdgeAI Workout Tracker</title>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 16px; background: #111; color: #eee; }
+  h2 { color: #6cf; }
+  button { font-size: 18px; padding: 12px 24px; border-radius: 8px; border: none;
+           background: #2a7; color: #fff; margin-bottom: 16px; }
+  button:disabled { background: #555; }
+  .grid { display: grid; grid-template-columns: auto auto; gap: 6px 16px; font-size: 20px; }
+  .grid b { color: #6cf; }
+  #repbox { font-size: 64px; font-weight: bold; text-align: center; margin: 12px 0; }
+  #log { font-family: monospace; font-size: 11px; color: #9a9; white-space: pre-line;
+         max-height: 30vh; overflow-y: auto; border-top: 1px solid #333; margin-top: 16px; padding-top: 8px; }
+</style>
+</head>
+<body>
+<h2>EdgeAI Workout Tracker</h2>
+<button id="btn">Connect</button>
+<div id="repbox">—</div>
+<div class="grid">
+  <b>Activity</b><span id="act">—</span>
+  <b>Confidence</b><span id="conf">—</span>
+  <b>Set</b><span id="set">—</span>
+  <b>Uptime</b><span id="ts">—</span>
+</div>
+<div id="log"></div>
+
+<script>
+// UUID PHẢI viết thường (Web Bluetooth yêu cầu)
+const SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const TX_UUID      = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const CLASSES = ['bicep_curl', 'idle', 'lateral_raise', 'shoulder_press', 'tricep_ext'];
+
+const $ = id => document.getElementById(id);
+function log(msg) {
+  $('log').textContent = new Date().toLocaleTimeString() + '  ' + msg + '\n' + $('log').textContent;
+}
+
+function onPacket(event) {
+  const d = event.target.value;                 // DataView — KHÔNG decode text
+  const p = {
+    activity   : d.getUint8(0),
+    confidence : d.getUint8(1),
+    rep_count  : d.getUint8(2),
+    set_no     : d.getUint8(3),
+    timestamp_s: d.getUint16(4, true),          // little-endian
+  };
+  $('repbox').textContent = p.rep_count;
+  $('act').textContent  = CLASSES[p.activity] ?? ('?' + p.activity);
+  $('conf').textContent = p.confidence + '%';
+  $('set').textContent  = p.set_no;
+  $('ts').textContent   = p.timestamp_s + 's';
+  const hex = [...new Uint8Array(d.buffer)].map(b => b.toString(16).padStart(2, '0')).join(' ');
+  log(`[${hex}] ${CLASSES[p.activity]} rep=${p.rep_count} set=${p.set_no}`);
+}
+
+let device = null;
+
+// Connect GATT + subscribe notify. Gọi lại được sau mỗi lần rớt
+// (gói TUYỆT ĐỐI nên rớt giữa chừng không mất dữ liệu — packet sau tự bù).
+async function connectGatt() {
+  const server  = await device.gatt.connect();
+  const service = await server.getPrimaryService(SERVICE_UUID);
+  const txChar  = await service.getCharacteristic(TX_UUID);
+  await txChar.startNotifications();               // bật CCCD notify
+  txChar.addEventListener('characteristicvaluechanged', onPacket);
+  $('btn').disabled = true;
+  $('btn').textContent = 'Connected';
+}
+
+async function onDisconnected() {
+  log('!! MẤT KẾT NỐI — tự reconnect...');
+  $('btn').textContent = 'Reconnecting...';
+  for (let i = 1; i <= 10; i++) {
+    try {
+      await connectGatt();
+      log('Đã kết nối lại (lần thử ' + i + ')');
+      return;
+    } catch (e) {
+      await new Promise(r => setTimeout(r, 1000));   // đợi 1s giữa các lần
+    }
+  }
+  log('Reconnect thất bại sau 10 lần — bấm nút để thử lại.');
+  $('btn').disabled = false;
+  $('btn').textContent = 'Reconnect';
+}
+
+$('btn').addEventListener('click', async () => {     // PHẢI từ user gesture
+  try {
+    if (!device) {
+      device = await navigator.bluetooth.requestDevice({
+        // match 1 trong 2: service UUID trong advertising HOẶC tên EdgeAI*
+        filters: [{ services: [SERVICE_UUID] }, { namePrefix: 'EdgeAI' }],
+        optionalServices: [SERVICE_UUID],   // cần khi match bằng namePrefix
+      });
+      log('Đã chọn: ' + device.name);
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+    }
+    await connectGatt();
+    log('ĐÃ KẾT NỐI — chờ packet (mỗi ~1.5s)...');
+  } catch (e) {
+    log('Lỗi: ' + e.message);
+  }
+});
+
+if (!navigator.bluetooth) {
+  log('Trình duyệt này KHÔNG có Web Bluetooth — hãy mở bằng Bluefy (iOS) hoặc Chrome (Android/PC).');
+}
+</script>
+</body>
+</html>

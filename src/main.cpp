@@ -11,11 +11,14 @@
 //
 // Detector PEAKDET verify C++≡Python 100% (training/sim_peakdet.py).
 // Build BLE data-capture: -D DATA_CAPTURE_MODE (xem src/data_capture.cpp).
-// TODO Stage 2: BLE GATT notify gói tuyệt đối [activity,conf,rep,set,ts].
+//
+// Stage 2 — BLE GATT notify gói TUYỆT ĐỐI (src/ble_notify.h, doc Section 3):
+//   notify mỗi inference cycle (~1.5s) + ngay khi đếm được rep.
 // ═══════════════════════════════════════════════════════════════
 
 #include "SparkFun_BMI270_Arduino_Library.h"
 #include "ai_inference.h"
+#include "ble_notify.h"
 #include "norm_params.h"
 #include "rep_tracker.h"
 #include <Arduino.h>
@@ -26,6 +29,23 @@ BMI270 imu;
 static const unsigned long SAMPLING_PERIOD_MS = 20;   // 50Hz
 
 RepTracker tracker;
+BleNotify  ble;
+
+static uint8_t last_conf_pct = 0;   // confidence inference gần nhất (0-100)
+
+// Gói tuyệt đối từ trạng thái tracker hiện tại (doc Section 3).
+// IDLE: activity=idle, rep_count giữ kết quả set vừa chốt (sticky).
+static BLEPacket_t makePacket(unsigned long now_ms) {
+  BLEPacket_t p;
+  bool active = tracker.committed() >= 0;
+  p.activity    = active ? (uint8_t)tracker.committed() : 1;   // 1 = idle
+  p.confidence  = last_conf_pct;
+  int rep       = active ? tracker.repDisplay() : tracker.closedReps();
+  p.rep_count   = rep > 255 ? 255 : (uint8_t)rep;
+  p.set_no      = (uint8_t)tracker.setNo();
+  p.timestamp_s = (uint16_t)(now_ms / 1000UL);
+  return p;
+}
 
 // ── Ring buffer cho inference (RAW) ──
 static float ring_buf[HAR_WINDOW_SIZE][HAR_NUM_AXES];
@@ -55,7 +75,8 @@ void setup() {
   }
   harPrintModelInfo();
   tracker.reset();
-  Serial.println("Classify + RepTracker (PEAKDET + vote). Bat dau...");
+  ble.init();
+  Serial.println("Classify + RepTracker + BLE notify. Bat dau...");
 }
 
 void loop() {
@@ -84,6 +105,7 @@ void loop() {
       Serial.printf("REP! [%s] count: %d (swing=%lums)\n",
                     HAR_CLASS_NAMES[tracker.committed()], tracker.repDisplay(),
                     (unsigned long)tracker.lastSwingMs());
+    ble.send(makePacket(currentMillis));   // notify NGAY — UI nhảy rep tức thì
   }
 
   // ── Nạp ring buffer (RAW) cho inference ──
@@ -134,5 +156,9 @@ void loop() {
     default:
       break;
   }
+
+  // ── Notify định kỳ mỗi inference cycle (sau khi state machine cập nhật) ──
+  last_conf_pct = (uint8_t)(result.confidence * 100.0f);
+  ble.send(makePacket(currentMillis));
 }
 #endif

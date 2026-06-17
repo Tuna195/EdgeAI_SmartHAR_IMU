@@ -1,10 +1,14 @@
 #pragma once
 // rep_tracker.h — Bộ não đếm rep: state machine + 3 detector + vote/switch
 // ─────────────────────────────────────────────────────────────
-// Gộp 2 ý tưởng:
+// Gộp 3 ý tưởng:
 //   (1) +1 rep ngay khi commit bài (rep lead-in mà classify mới nhận ra được).
 //   (2) Khoá bài (stickiness) + cho SỬA SAI khởi đầu trong ≤3 rep đầu bằng
 //       vote M/K, KHÔNG mất rep nhờ 3 detector always-warm tích luỹ từ set start.
+//   (3) ĐỔI BÀI giữa set: sau 3 rep mà bài khác thắng vote M/K → CHỐT set cũ +
+//       mở set mới (1 set = 1 bài). Kèm gate votesAgainst≥2 khoá đếm rep của bài
+//       đang commit khi classifier báo bài khác → chặn phantom (vd lateral-det
+//       ăn swing ax của bicep). Đếm chỉ chạy khi motion ĂN KHỚP nhãn hiện tại.
 //
 // Mapping class→detector: bicep(0)→D0, tricep(4)→D1, lateral(2)→D2;
 // shoulder(3) → world-vertical (wv_, raw). Trục/delta: xem configDetectors()
@@ -36,25 +40,39 @@ public:
         state_ = IDLE; committed_ = -1; set_no_ = 0;
         for (int i = 0; i < N_DET; i++) det_count_[i] = 0;
         wv_.reset(); wv_count_ = 0;
-        voteClear(); idle_streak_ = 0; closed_reps_ = 0;
+        voteClear(); idle_streak_ = 0; closed_reps_ = 0; bonus_reps_ = 0;
     }
 
     // Gọi MỖI MẪU (cần z6 cho peakdet + raw6 cho world-vertical shoulder).
     // Trả về true nếu rep_display của bài đang commit vừa +1.
     bool onSample(const float z6[6], const float raw6[6], uint32_t now_ms) {
-        if (state_ != ACTIVE) return false;
+        // Chỉ đếm khi đang ACTIVE VÀ context hiện tại KHÔNG phải idle.
+        // idle_streak_ > 0 = inference gần nhất là idle → ngừng đếm ngay (chặn
+        // phantom rep lúc hạ tay/nghỉ cuối set, kể cả khi chưa đủ 3 window chốt set).
+        if (state_ != ACTIVE || idle_streak_ > 0) return false;
         bool committed_fired = false;
+        // GATE chống phantom đổi-bài: nếu ≥2/4 window gần nhất classifier chắc chắn
+        // báo BÀI KHÁC (người dùng đã đổi động tác, set chưa chốt), khoá đếm rep của
+        // bài đang commit. Detector VẪN update() để không mất nhịp khi switch — chỉ
+        // KHÔNG ghi count. Dùng ≥2 (không phải 1) để 1 window misfire không drop rep thật.
+        bool gate = votesAgainst(committed_) >= 2;
         // 3 bài xoay (bicep/tricep/lateral) — always-warm.
         for (int i = 0; i < N_DET; i++) {
-            if (dets_[i].update(z6, now_ms)) {
-                det_count_[i]++;
-                if (i == detOf(committed_)) committed_fired = true;
+            if (!dets_[i].update(z6, now_ms)) continue;
+            if (i == detOf(committed_)) {
+                if (gate) continue;                // phantom: bỏ, không tính
+                det_count_[i]++; committed_fired = true;
+            } else {
+                det_count_[i]++;                   // bài khác: vẫn tích luỹ cho switch (không mất nhịp)
             }
         }
         // shoulder_press dùng WORLD-VERTICAL (raw), không phải peakdet ay.
         if (wv_.update(raw6, now_ms)) {
-            wv_count_++;
-            if (committed_ == SHOULDER_CLS) committed_fired = true;
+            if (committed_ == SHOULDER_CLS) {
+                if (!gate) { wv_count_++; committed_fired = true; }   // gate → bỏ phantom
+            } else {
+                wv_count_++;                       // always-warm cho switch sang shoulder
+            }
         }
         return committed_fired;
     }
@@ -73,15 +91,23 @@ public:
             if (++idle_streak_ >= IDLE_CLOSE) { closeSet(); return SET_CLOSED; }
             return NONE;
         }
+        bool resuming = (idle_streak_ > 0);            // vừa thoát idle-pause (set CHƯA chốt)
         idle_streak_ = 0;                              // bất kỳ non-idle → reset streak idle
 
         if (!confident) { votePush(-1); return NONE; } // low-conf = phiếu trắng
 
+        // Resume sau idle-pause bằng ĐÚNG bài đang commit → +1 lead-in: nhịp tập trong
+        // lúc classifier nhận diện lại mà detector đang gate-pause (giống lead-in commit).
+        if (resuming && cls == committed_) bonus_reps_++;
+
         votePush(cls);
-        if (cls != committed_ && repDisplay() <= SWITCH_MAX_REPS
-                && votesFor(cls) >= VOTE_M) {
-            switchTo(cls);                             // sửa sai khởi đầu
-            return SWITCHED;
+        if (cls != committed_ && votesFor(cls) >= VOTE_M) {
+            if (repDisplay() <= SWITCH_MAX_REPS) {
+                switchTo(cls);                         // ≤3 rep đầu: sửa sai khởi đầu (relabel cùng set)
+                return SWITCHED;
+            }
+            closeSet();                                // ĐỔI BÀI giữa set → chốt set cũ ở rep thật;
+            return SET_CLOSED;                         // set mới commit ở inference kế (qua nhánh IDLE)
         }
         return NONE;
     }
@@ -93,8 +119,9 @@ public:
     int     closedReps() const { return closed_reps_; }   // rep của set vừa chốt
     int repDisplay() const {
         if (committed_ < 0) return 0;
-        if (committed_ == SHOULDER_CLS) return REP_BASE_CREDIT + wv_count_;
-        return REP_BASE_CREDIT + det_count_[detOf(committed_)];
+        int base = REP_BASE_CREDIT + bonus_reps_;      // lead-in commit + mỗi lần resume idle
+        if (committed_ == SHOULDER_CLS) return base + wv_count_;
+        return base + det_count_[detOf(committed_)];
     }
     uint32_t lastShoulderUpMs()   const { return wv_.lastUpMs(); }    // debug/tune
     uint32_t lastShoulderDownMs() const { return wv_.lastDownMs(); }
@@ -131,7 +158,7 @@ private:
     void commit(int cls, uint32_t /*now_ms*/) {
         state_ = ACTIVE; committed_ = cls; set_no_++;
         configDetectors();                             // reset + warm 4 detector
-        idle_streak_ = 0; voteClear();
+        idle_streak_ = 0; voteClear(); bonus_reps_ = 0;
     }
     void switchTo(int cls) {
         committed_ = cls;                              // đổi nhãn; det count giữ nguyên (đã tích luỹ)
@@ -148,6 +175,12 @@ private:
     int  votesFor(int cls) const {
         int n = 0; for (int i = 0; i < VOTE_K; i++) if (vote_[i] == cls) n++; return n;
     }
+    int  votesAgainst(int committed) const {           // phiếu là BÀI KHÁC (exercise ≠ committed)
+        int n = 0;
+        for (int i = 0; i < VOTE_K; i++)
+            if (vote_[i] >= 0 && vote_[i] != IDLE_IDX && vote_[i] != committed) n++;
+        return n;
+    }
 
     static constexpr int N_DET = 3;                    // bicep,tricep,lateral (shoulder = wv_)
 
@@ -162,4 +195,5 @@ private:
     int8_t       vote_[VOTE_K] = {-1, -1, -1, -1};
     int          vote_head_  = 0;
     int          idle_streak_= 0;
+    int          bonus_reps_ = 0;   // lead-in lúc commit + mỗi lần resume sau idle-pause
 };

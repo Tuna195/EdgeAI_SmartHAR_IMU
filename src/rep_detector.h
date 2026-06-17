@@ -63,9 +63,18 @@ public:
         if (x > mx_) { mx_ = x; mx_ms_ = now_ms; }
         if (x < mn_) { mn_ = x; mn_ms_ = now_ms; }
 
-        if (phase_ == 0) {                       // chưa biết chiều → chờ rời 1 cực > delta
-            if (x > mn_ + delta_)      { phase_ =  1; mx_ = x; mx_ms_ = now_ms; }
-            else if (x < mx_ - delta_) { phase_ = -1; mn_ = x; mn_ms_ = now_ms; }
+        if (phase_ == 0) {                       // ĐOÁN CHIỀU từ hướng rời cực đầu →
+            // đặt MỐC NGẦM (anchor) để rep đầu cũng được tính, không bị priming câm.
+            if (x > mn_ + delta_) {              // đang LÊN → vừa rời ĐÁY → mốc ngầm = valley
+                phase_ = 1; mx_ = x; mx_ms_ = now_ms;
+                e1_type_ = -1; saw_e1_ = true;            // anchor = đáy (tại mn_ms_)
+                last_ev_ms_ = mn_ms_; have_last_ev_ = true;
+            } else if (x < mx_ - delta_) {       // đang XUỐNG → vừa rời ĐỈNH → mốc ngầm = peak
+                phase_ = -1;
+                e1_type_ = 1; saw_e1_ = true;             // anchor = đỉnh (tại mx_ms_)
+                last_ev_ms_ = mx_ms_; have_last_ev_ = true;
+                mn_ = x; mn_ms_ = now_ms;
+            }
             return false;
         }
 

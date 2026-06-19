@@ -64,14 +64,13 @@ void setup() {
   delay(100);
 
   if (imu.beginI2C(0x68) != BMI2_OK) {
-    Serial.println("LOI: Khong the khoi tao BMI270!");
     while (1)
-      ;
+      Serial.println("LOI: Khong the khoi tao BMI270!");
+      
   }
   if (!harInit()) {
-    Serial.println("LOI: Khoi tao AI (TFLite) that bai!");
     while (1)
-      ;
+      Serial.println("LOI: Khoi tao AI (TFLite) that bai!");
   }
   harPrintModelInfo();
   tracker.reset();

@@ -78,6 +78,9 @@
   .btn-block { display: block; width: 100%; margin-bottom: 12px; }
   .toggles { display: flex; gap: 10px; margin-bottom: 12px; }
   .toggles .btn { flex: 1; }
+  .top-right { display: flex; align-items: center; gap: 8px; }
+  .ctrl-row { display: flex; gap: 10px; margin-bottom: 12px; }
+  .ctrl-row .btn { flex: 1; }
 
   /* ── Log (ẩn mặc định) ── */
   #log { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted);
@@ -91,7 +94,10 @@
 
 <div class="topbar">
   <h1>EdgeAI Workout</h1>
-  <span class="pill" id="pill"><span class="dot"></span><span id="pilltxt">Chưa kết nối</span></span>
+  <div class="top-right">
+    <span class="pill" id="pill"><span class="dot"></span><span id="pilltxt">Chưa kết nối</span></span>
+    <button class="btn btn-ghost btn-sm hidden" id="btnEnd">Kết thúc</button>
+  </div>
 </div>
 
 <div class="hero">
@@ -101,7 +107,11 @@
   <div class="live" id="live"><span id="livelbl">Sẵn sàng</span> <b id="livetime">0:00</b></div>
 </div>
 
-<button class="btn btn-primary btn-block" id="btn">Kết nối</button>
+<button class="btn btn-primary btn-block" id="btnConnect">Kết nối</button>
+<div class="ctrl-row hidden" id="ctrlRow">
+  <button class="btn" id="btnDisconnect">Ngắt kết nối</button>
+  <button class="btn btn-primary" id="btnStart">Bắt đầu</button>
+</div>
 
 <div class="stats">
   <div class="stat"><div class="k">Set hiện tại</div><div class="v" id="set">—</div></div>
@@ -120,7 +130,6 @@
 <div class="sets hidden" id="histPanel">
   <div class="sets-head">
     <span class="t">Lịch sử set</span>
-    <button class="btn btn-ghost btn-sm" id="newSession">Phiên mới</button>
   </div>
   <div class="sets-list" id="sets"><div class="sets-empty">Chưa có set nào.</div></div>
 </div>
@@ -133,6 +142,7 @@ const SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const TX_UUID      = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 const CLASSES = ['bicep_curl', 'idle', 'lateral_raise', 'shoulder_press', 'tricep_ext'];
 const IDLE = 1;
+const SERVER_URL = '';   // TODO: điền endpoint khi có server, vd 'https://.../api/sessions'
 const NICE = {                                  // index → {tên đẹp, icon}
   0: { name: 'Bicep Curl',     ico: '💪' },
   1: { name: 'Nghỉ',           ico: '😴' },
@@ -166,6 +176,10 @@ let wasIdle      = true;     // pha trước đó
 let everHadSet   = false;    // đã có ít nhất 1 set → idle mới tính là "nghỉ"
 let lastSetDur   = null;     // ms — thời lượng set vừa chốt
 
+// ── Điều khiển buổi tập ──
+let started = false, paused = false, pauseStart = 0;
+let manualDisconnect = false;   // ngắt chủ động → KHÔNG tự reconnect
+
 function fmt(ms) {
   if (ms == null) return '–';
   const s = Math.floor(ms / 1000);
@@ -191,27 +205,113 @@ function renderSets() {
   $('histToggle').textContent = 'Lịch sử' + (history.length ? ` (${history.length})` : '');
 }
 
-function newSession() {
-  history = [];
-  recordedSet.clear();
-  baseSet = maxSetSeen;       // bỏ qua mọi set đã đếm, kể cả set idle-sticky hiện tại
-  sessionStart = Date.now();
-  phaseStart   = sessionStart;
-  setStart     = 0;
-  restAccum    = 0;
-  wasIdle      = true;
-  everHadSet   = false;
-  lastSetDur   = null;
+function setConnUI(connected) {                 // đổi giữa nút "Kết nối" và hàng điều khiển
+  $('btnConnect').classList.toggle('hidden', connected);
+  $('ctrlRow').classList.toggle('hidden', !connected);
+}
+
+function updateCtrl() {                          // nhãn nút bắt đầu/dừng/tiếp tục + nút Kết thúc
+  const b = $('btnStart');
+  if (!started)     b.textContent = 'Bắt đầu';
+  else if (!paused) b.textContent = 'Dừng';
+  else              b.textContent = 'Tiếp tục';
+  $('btnEnd').classList.toggle('hidden', !started);
+}
+
+function resetSessionVars() {
+  history = []; recordedSet.clear(); baseSet = maxSetSeen;   // bỏ qua mọi set firmware đã đếm
+  setStart = 0; restAccum = 0; wasIdle = true; everHadSet = false; lastSetDur = null;
+}
+
+function startSession() {                        // "Bắt đầu" — vào buổi tập mới
+  resetSessionVars();
+  sessionStart = Date.now(); phaseStart = sessionStart;
+  started = true; paused = false;
   renderSets();
-  $('rep').textContent = 0;
+  $('rep').textContent = 0; $('rep').classList.add('idle');
   $('set').textContent = 0;
-  log('— Phiên mới —');
+  log('▶ Bắt đầu buổi tập');
+}
+
+function pauseSession() {                         // "Dừng" — tạm dừng, đóng băng timer
+  paused = true; pauseStart = Date.now();
+  log('⏸ Tạm dừng');
+}
+
+function resumeSession() {                        // "Tiếp tục" — bù khoảng dừng vào các mốc
+  const delta = Date.now() - pauseStart;
+  sessionStart += delta; phaseStart += delta;
+  if (setStart) setStart += delta;
+  paused = false;
+  log('▶ Tiếp tục');
+}
+
+function endSession() {                           // "Kết thúc" — dừng buổi tập, về trạng thái chờ
+  started = false; paused = false;
+  sessionStart = 0; phaseStart = 0;
+  resetSessionVars();
+  renderSets();
+  $('rep').textContent = '—'; $('rep').classList.add('idle');
+  $('set').textContent = '—';
+  $('sessTime').textContent = $('actTime').textContent = $('restTime').textContent = '0:00';
+  $('actname').textContent = '—'; $('act').classList.add('idle');
+  $('act').querySelector('.ico').textContent = '😴';
+  $('live').className = 'live'; $('livelbl').textContent = 'Sẵn sàng'; $('livetime').textContent = '0:00';
+  log('⏹ Kết thúc buổi tập');
+}
+
+// Gom dữ liệu buổi tập thành 1 gói để gửi server (gọi TRƯỚC khi endSession reset).
+function buildSessionPayload() {
+  const now = Date.now();
+  return {
+    endedAt:    new Date().toISOString(),
+    durationMs: sessionStart ? now - sessionStart : 0,        // đã trừ thời gian tạm dừng
+    sets: history.map((s, i) => ({
+      index:      i + 1,
+      exercise:   CLASSES[s.cls],
+      reps:       s.reps,
+      durationMs: s.dur,
+    })),
+    totals: {
+      sets:     history.length,
+      reps:     history.reduce((a, s) => a + s.reps, 0),
+      activeMs: history.reduce((a, s) => a + (s.dur || 0), 0),
+      restMs:   restAccum + (wasIdle && everHadSet ? now - phaseStart : 0),
+    },
+  };
+}
+
+// Gửi buổi tập lên server. CHƯA cấu hình SERVER_URL → chỉ lưu vào hàng đợi localStorage;
+// khi điền endpoint (+ token đăng nhập) thì tự gửi, mất mạng vẫn không mất dữ liệu.
+async function uploadSession(payload) {
+  const outbox = JSON.parse(localStorage.getItem('outbox') || '[]');
+  outbox.push(payload);
+  localStorage.setItem('outbox', JSON.stringify(outbox));
+
+  if (!SERVER_URL) {
+    log(`💾 Đã lưu buổi tập (${payload.totals.sets} set) — chưa cấu hình server.`);
+    return;
+  }
+  try {                                            // gửi cả hàng đợi (gồm buổi cũ chưa gửi được)
+    for (const item of outbox) {
+      const res = await fetch(SERVER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },   // TODO: thêm Authorization khi có đăng nhập
+        body: JSON.stringify(item),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    }
+    localStorage.setItem('outbox', '[]');          // tất cả đã gửi → dọn hàng đợi
+    log(`☁ Đã gửi ${outbox.length} buổi tập lên server.`);
+  } catch (e) {
+    log('⚠ Gửi server lỗi/mất mạng — giữ trong hàng đợi, gửi sau.');
+  }
 }
 
 // Cập nhật đồng hồ live mỗi 250ms (độc lập với nhịp packet).
 function tick() {
-  if (!sessionStart) return;
-  const now = Date.now();
+  if (!started) return;
+  const now = paused ? pauseStart : Date.now();   // tạm dừng → đóng băng số liệu
   $('sessTime').textContent = fmt(now - sessionStart);
   $('restTime').textContent = fmt(restAccum + (wasIdle && everHadSet ? now - phaseStart : 0));
   const doneDur = history.reduce((a, s) => a + (s.dur || 0), 0);
@@ -243,10 +343,15 @@ function onPacket(event) {
     set_no     : d.getUint8(3),
     timestamp_s: d.getUint16(4, true),          // little-endian
   };
+  const hex = [...new Uint8Array(d.buffer)].map(b => b.toString(16).padStart(2, '0')).join(' ');
+  log(`[${hex}] ${CLASSES[p.activity]} rep=${p.rep_count} set=${p.set_no} ` +
+      `conf=${p.confidence}% up=${p.timestamp_s}s`);
+
+  if (p.set_no > maxSetSeen) maxSetSeen = p.set_no;   // luôn theo dõi để baseSet đúng
+  if (!started || paused) return;                     // chưa bắt đầu / tạm dừng → không tracking
+
   const idle = p.activity === IDLE;
   const now  = Date.now();
-  if (!sessionStart) sessionStart = now;
-  if (p.set_no > maxSetSeen) maxSetSeen = p.set_no;
   if (!idle) lastActive = p.activity;            // nhớ bài đang tập (idle không mang tên bài)
 
   // Chuyển pha: ACTIVE↔IDLE → đánh mốc cho timer.
@@ -281,10 +386,6 @@ function onPacket(event) {
   $('act').classList.toggle('idle', idle);
 
   $('set').textContent = idle ? history.length : Math.max(0, p.set_no - baseSet);
-
-  const hex = [...new Uint8Array(d.buffer)].map(b => b.toString(16).padStart(2, '0')).join(' ');
-  log(`[${hex}] ${CLASSES[p.activity]} rep=${p.rep_count} set=${p.set_no} ` +
-      `conf=${p.confidence}% up=${p.timestamp_s}s`);
 }
 
 let device = null;
@@ -297,15 +398,14 @@ async function connectGatt() {
   const txChar  = await service.getCharacteristic(TX_UUID);
   await txChar.startNotifications();               // bật CCCD notify
   txChar.addEventListener('characteristicvaluechanged', onPacket);
-  $('btn').disabled = true;
-  $('btn').textContent = 'Đã kết nối';
+  setConnUI(true);
   setStatus('ok', 'Đã kết nối');
 }
 
 async function onDisconnected() {
+  if (manualDisconnect) { manualDisconnect = false; return; }   // ngắt chủ động: bỏ qua
   log('!! MẤT KẾT NỐI — tự reconnect...');
   setStatus('warn', 'Đang kết nối lại…');
-  $('btn').textContent = 'Đang kết nối lại…';
   for (let i = 1; i <= 10; i++) {
     try {
       await connectGatt();
@@ -317,12 +417,12 @@ async function onDisconnected() {
   }
   log('Reconnect thất bại sau 10 lần — bấm nút để thử lại.');
   setStatus('err', 'Mất kết nối');
-  $('btn').disabled = false;
-  $('btn').textContent = 'Kết nối lại';
+  setConnUI(false);
 }
 
-$('btn').addEventListener('click', async () => {     // PHẢI từ user gesture
+$('btnConnect').addEventListener('click', async () => {     // PHẢI từ user gesture
   try {
+    manualDisconnect = false;
     if (!device) {
       device = await navigator.bluetooth.requestDevice({
         // match 1 trong 2: service UUID trong advertising HOẶC tên EdgeAI*
@@ -334,11 +434,33 @@ $('btn').addEventListener('click', async () => {     // PHẢI từ user gesture
     }
     setStatus('warn', 'Đang kết nối…');
     await connectGatt();
-    log('ĐÃ KẾT NỐI — chờ packet (mỗi ~1.5s)...');
+    log('ĐÃ KẾT NỐI — bấm "Bắt đầu" để vào buổi tập.');
   } catch (e) {
     log('Lỗi: ' + e.message);
     setStatus('err', 'Lỗi kết nối');
   }
+});
+
+$('btnDisconnect').addEventListener('click', () => {
+  manualDisconnect = true;
+  if (device && device.gatt.connected) device.gatt.disconnect();
+  setConnUI(false);
+  setStatus('', 'Đã ngắt');
+  log('Đã ngắt kết nối (chủ động).');
+});
+
+$('btnStart').addEventListener('click', () => {
+  if (!started)      startSession();
+  else if (!paused)  pauseSession();
+  else               resumeSession();
+  updateCtrl();
+});
+
+$('btnEnd').addEventListener('click', async () => {
+  if (!confirm('Kết thúc buổi tập? Dữ liệu sẽ được lưu lại (gửi lên server khi đã cấu hình).')) return;
+  if (history.length > 0) await uploadSession(buildSessionPayload());   // gửi TRƯỚC khi reset
+  endSession();
+  updateCtrl();
 });
 
 $('logToggle').addEventListener('click', () => {
@@ -349,7 +471,6 @@ $('histToggle').addEventListener('click', () => {
   const hidden = $('histPanel').classList.toggle('hidden');
   $('histToggle').classList.toggle('btn-primary', !hidden);
 });
-$('newSession').addEventListener('click', newSession);
 
 if (!navigator.bluetooth) {
   log('Trình duyệt này KHÔNG có Web Bluetooth — hãy mở bằng Bluefy (iOS) hoặc Chrome (Android/PC).');

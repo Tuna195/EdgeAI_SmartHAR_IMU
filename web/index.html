@@ -148,6 +148,8 @@
   .mini .mv { font-size: 18px; font-weight: 700; margin-top: 3px; }
   .mini .mv small { font-size: 11px; color: var(--muted); font-weight: 400; }
   .mini .mv.up { color: var(--ok); } .mini .mv.down { color: var(--err); }
+  .mini .msub { font-size: 10px; margin-top: 4px; line-height: 1.2; }
+  .mini .msub.up { color: var(--ok); } .mini .msub.down { color: var(--err); }
   .mini.goal { cursor: pointer; }
   .goalbar { height: 5px; background: #0a0c10; border-radius: 3px; margin-top: 7px; overflow: hidden; }
   .goalbar i { display: block; height: 100%; background: var(--accent); }
@@ -543,15 +545,17 @@ function renderStreakCompareGoal() {
   const nextWs = new Date(ws); nextWs.setDate(nextWs.getDate() + 7);
   const lastWs = new Date(ws); lastWs.setDate(lastWs.getDate() - 7);
   const thisW = repsInRange(ws, nextWs), lastW = repsInRange(lastWs, ws);
-  let cmp, cls;
-  if (lastW === 0) { cmp = thisW > 0 ? 'mới' : '—'; cls = 'up'; }
-  else { const p = Math.round((thisW - lastW) / lastW * 100); cmp = (p >= 0 ? '+' : '') + p + '%'; cls = p >= 0 ? 'up' : 'down'; }
+  let sub = '';                                  // chỉ so sánh khi tuần trước có dữ liệu
+  if (lastW > 0) {
+    const p = Math.round((thisW - lastW) / lastW * 100);
+    sub = `<div class="msub ${p >= 0 ? 'up' : 'down'}">${p >= 0 ? '▲' : '▼'} ${Math.abs(p)}% vs tuần trước</div>`;
+  }
   const target = +(localStorage.getItem('goalPerWeek') || 4);
   const sessWeek = allSessions.filter(s => s.date >= ws && s.date < nextWs).length;
   const goalPct = Math.min(100, Math.round(sessWeek / target * 100));
   $('miniRow').innerHTML =
     `<div class="mini"><div class="mk">Streak</div><div class="mv">🔥 ${streak} <small>ngày</small></div></div>` +
-    `<div class="mini"><div class="mk">Tuần này</div><div class="mv ${cls}">${cmp} <small>rep</small></div></div>` +
+    `<div class="mini"><div class="mk">Tuần này</div><div class="mv">${thisW} <small>rep</small></div>${sub}</div>` +
     `<div class="mini goal" id="goalCard"><div class="mk">Mục tiêu tuần</div><div class="mv">${sessWeek}/${target} <small>buổi</small></div>` +
     `<div class="goalbar"><i style="width:${goalPct}%"></i></div></div>`;
 }

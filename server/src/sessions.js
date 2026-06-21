@@ -29,13 +29,22 @@ sessionsRouter.post('/', (req, res) => {
   res.status(201).json({ id: info.lastInsertRowid });
 });
 
-// GET /api/sessions — danh sách tóm tắt, mới nhất trước.
+// GET /api/sessions — danh sách tóm tắt (kèm rep theo từng bài), mới nhất trước.
 sessionsRouter.get('/', (req, res) => {
   const rows = db.prepare(`
-    SELECT id, ended_at, duration_ms, total_sets, total_reps, active_ms, rest_ms, created_at
+    SELECT id, ended_at, duration_ms, total_sets, total_reps, active_ms, rest_ms, data, created_at
     FROM sessions WHERE user_id = ? ORDER BY created_at DESC
   `).all(req.user.uid);
-  res.json(rows);
+  const out = rows.map(r => {
+    const byExercise = {};                         // { bicep_curl: 24, ... } cho biểu đồ chồng màu
+    try {
+      for (const s of (JSON.parse(r.data).sets || []))
+        byExercise[s.exercise] = (byExercise[s.exercise] || 0) + (s.reps || 0);
+    } catch {}
+    const { data, ...rest } = r;                   // bỏ data thô khỏi list cho nhẹ
+    return { ...rest, byExercise };
+  });
+  res.json(out);
 });
 
 // GET /api/sessions/:id — chi tiết 1 buổi (kèm mảng sets đã parse).

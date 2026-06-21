@@ -126,6 +126,44 @@
   .del:hover { color: var(--err); }
   .sdetail { padding: 2px 14px 12px; border-top: 1px solid var(--line); }
   .empty { text-align: center; color: var(--muted); padding: 24px 0; font-size: 14px; }
+
+  /* ── Tiến độ: bộ chọn khoảng + biểu đồ nâng cao ── */
+  .seg { display: flex; gap: 6px; margin-bottom: 12px; background: var(--card);
+         border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
+  .seg button { flex: 1; font-size: 13px; font-weight: 600; padding: 8px 4px; border: none;
+                border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; }
+  .seg button.active { background: var(--accent); color: #06121f; }
+  .seg-sm { margin-bottom: 10px; }
+  .seg-sm button { font-size: 17px; padding: 7px 4px; }
+  .seg-sm button.active { background: #0a0c10; box-shadow: inset 0 0 0 2px currentColor; }
+  .range-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .range-row input { margin: 0; padding: 9px 10px; font-size: 14px; }
+  .chart-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 12px; }
+  .legend .lg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .legend .lg i { width: 11px; height: 11px; border-radius: 3px; }
+  .mini-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .mini { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 11px 12px; }
+  .mini .mk { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .mini .mv { font-size: 18px; font-weight: 700; margin-top: 3px; }
+  .mini .mv small { font-size: 11px; color: var(--muted); font-weight: 400; }
+  .mini .mv.up { color: var(--ok); } .mini .mv.down { color: var(--err); }
+  .mini.goal { cursor: pointer; }
+  .goalbar { height: 5px; background: #0a0c10; border-radius: 3px; margin-top: 7px; overflow: hidden; }
+  .goalbar i { display: block; height: 100%; background: var(--accent); }
+  .dotc { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .pr-row { display: flex; align-items: center; justify-content: space-between; font-size: 14px;
+            padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .pr-row:last-child { border-bottom: none; }
+  .pr-v { font-weight: 600; } .pr-v small { font-weight: 400; color: var(--muted); }
+  .hm-wrap { overflow-x: auto; }
+  .hm-grid { display: grid; grid-template-rows: repeat(7, 11px); grid-auto-flow: column;
+             grid-auto-columns: 11px; gap: 3px; width: max-content; }
+  .hm-cell { width: 11px; height: 11px; border-radius: 2px; background: #20242d; }
+  .hm-cell.lv1 { background: rgba(78,161,255,.30); }
+  .hm-cell.lv2 { background: rgba(78,161,255,.52); }
+  .hm-cell.lv3 { background: rgba(78,161,255,.78); }
+  .hm-cell.lv4 { background: var(--accent); }
 </style>
 </head>
 <body>
@@ -206,13 +244,47 @@
 
   <!-- ── TAB: Tiến độ ── -->
   <div id="progressView" class="hidden">
-    <div class="cards" id="cards"></div>
-    <div class="panel">
-      <div class="t">Reps mỗi buổi (gần đây)</div>
-      <div id="chart"></div>
+    <div class="seg" id="periodSeg">
+      <button data-p="day" class="active">Ngày</button>
+      <button data-p="week">Tuần</button>
+      <button data-p="month">Tháng</button>
+      <button data-p="custom">Tùy chọn</button>
     </div>
+    <div class="range-row hidden" id="customRange">
+      <input type="date" id="rangeFrom"><span class="muted">–</span><input type="date" id="rangeTo">
+      <button class="btn btn-sm btn-primary" id="rangeApply">Xem</button>
+    </div>
+
+    <div class="cards" id="cards"></div>
+    <div class="mini-row" id="miniRow"></div>
+
+    <div class="panel">
+      <div class="t">Rep theo <span id="bucketLabel">ngày</span> · bấm cột để xem buổi</div>
+      <div class="chart-scroll"><div id="chart"></div></div>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="panel">
+      <div class="t">Tiến độ theo bài</div>
+      <div class="seg seg-sm" id="exSeg"></div>
+      <div class="chart-scroll"><div id="exChart"></div></div>
+    </div>
+
+    <div class="panel">
+      <div class="t">Kỷ lục cá nhân</div>
+      <div id="prList"></div>
+    </div>
+
+    <div class="panel">
+      <div class="t">Lịch tập (12 tuần)</div>
+      <div class="hm-wrap"><div id="heatmap"></div></div>
+    </div>
+
     <div class="panel" style="padding-bottom:8px">
-      <div class="t">Lịch sử buổi tập</div>
+      <div class="sets-head" style="margin-bottom:10px">
+        <span class="t" style="margin:0">Lịch sử <span id="listScope" class="muted"></span></span>
+        <button class="btn btn-ghost btn-sm hidden" id="clearBucket">× bỏ lọc</button>
+      </div>
       <div id="list"></div>
     </div>
   </div>
@@ -237,6 +309,16 @@ const NICE = {                                  // index → {tên đẹp, icon}
   4: { name: 'Tricep Ext',     ico: '🔻' },
 };
 const niceByName = s => NICE[CLASSES.indexOf(s)] ?? { name: s, ico: '❓' };
+
+// Bài tập có rep (loại idle) + màu cho biểu đồ Tiến độ
+const EXC = {
+  bicep_curl:     { name: 'Bicep Curl',     ico: '💪', color: '#4ea1ff' },
+  lateral_raise:  { name: 'Lateral Raise',  ico: '🤸', color: '#f5a623' },
+  shoulder_press: { name: 'Shoulder Press', ico: '🏋️', color: '#2ecc71' },
+  tricep_ext:     { name: 'Tricep Ext',     ico: '🔻', color: '#b06fe3' },
+};
+const EXORDER = ['bicep_curl', 'lateral_raise', 'shoulder_press', 'tricep_ext'];
+const excInfo = n => EXC[n] || { name: n, ico: '❓', color: '#888' };
 
 const $ = id => document.getElementById(id);
 function log(msg) {
@@ -326,53 +408,225 @@ function showTab(name) {
 }
 
 // ════════ Tiến độ (dashboard) ════════
+let allSessions = [];          // [{...session, date, byExercise}]
+let period = 'day';            // 'day' | 'week' | 'month' | 'custom'
+let customFrom = null, customTo = null;
+let selectedBucket = null;     // key cột đang chọn (drill-down)
+let chartExercise = EXORDER[0];
+
+const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const endOfDay   = d => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+function weekStart(d) { const x = startOfDay(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }   // thứ 2
+const pad2 = n => String(n).padStart(2, '0');
+const dayKey   = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const monthKey = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+
 async function loadSessions() {
   $('list').innerHTML = '<div class="empty">Đang tải…</div>';
-  let sessions;
-  try { sessions = await api('/api/sessions'); }
-  catch (e) { $('list').innerHTML = `<div class="empty">Lỗi: ${e.message}</div>`; return; }
-  renderCards(sessions);
-  renderChart([...sessions].reverse());   // API trả mới→cũ; chart cần cũ→mới
-  renderList(sessions);
+  try {
+    const raw = await api('/api/sessions');
+    allSessions = raw.map(s => ({ ...s, date: toDate(s.created_at), byExercise: s.byExercise || {} }));
+  } catch (e) { $('list').innerHTML = `<div class="empty">Lỗi: ${e.message}</div>`; return; }
+  selectedBucket = null;
+  renderProgress();
 }
+
+// Gom session theo period đang chọn → buckets (cũ→mới) + session trong cửa sổ.
+function computeBuckets() {
+  const now = new Date();
+  let from, to = now, bucketOf, labelOf, bucketLabel;
+  if (period === 'week') {
+    from = weekStart(now); from.setDate(from.getDate() - 7 * 7);          // 8 tuần
+    bucketOf = d => dayKey(weekStart(d));
+    labelOf  = k => { const a = k.split('-'); return `${+a[2]}/${+a[1]}`; };
+    bucketLabel = 'tuần';
+  } else if (period === 'month') {
+    from = new Date(now.getFullYear(), now.getMonth() - 5, 1);            // 6 tháng
+    bucketOf = d => monthKey(d);
+    labelOf  = k => { const a = k.split('-'); return `${+a[1]}/${a[0].slice(2)}`; };
+    bucketLabel = 'tháng';
+  } else if (period === 'custom') {
+    from = customFrom ? startOfDay(customFrom) : startOfDay(new Date(now - 6 * 864e5));
+    to   = customTo ? endOfDay(customTo) : now;
+    bucketOf = d => dayKey(d);
+    labelOf  = k => { const a = k.split('-'); return `${+a[2]}/${+a[1]}`; };
+    bucketLabel = 'ngày';
+  } else {                                                                // day = 7 ngày
+    from = startOfDay(now); from.setDate(from.getDate() - 6);
+    bucketOf = d => dayKey(d);
+    labelOf  = k => { const a = k.split('-'); return `${+a[2]}/${+a[1]}`; };
+    bucketLabel = 'ngày';
+  }
+  const windowSessions = allSessions.filter(s => s.date >= from && s.date <= to);
+  const map = new Map();
+  for (const s of windowSessions) {
+    const key = bucketOf(s.date);
+    if (!map.has(key)) map.set(key, { key, sessions: [], byExercise: {}, total: 0 });
+    const b = map.get(key);
+    b.sessions.push(s);
+    b.total += s.total_reps || 0;
+    for (const [ex, r] of Object.entries(s.byExercise)) b.byExercise[ex] = (b.byExercise[ex] || 0) + r;
+  }
+  const buckets = [...map.values()].sort((a, b) => a.key < b.key ? -1 : 1);
+  buckets.forEach(b => b.label = labelOf(b.key));
+  return { buckets, windowSessions, bucketLabel };
+}
+
+function renderProgress() {
+  [...$('periodSeg').children].forEach(b => b.classList.toggle('active', b.dataset.p === period));
+  $('customRange').classList.toggle('hidden', period !== 'custom');
+
+  const { buckets, windowSessions, bucketLabel } = computeBuckets();
+  renderCards(windowSessions);
+  renderStreakCompareGoal();
+  renderChart(buckets, bucketLabel);
+  renderLegend();
+  renderExerciseProgress(buckets);
+  renderPR();
+  renderHeatmap();
+
+  const bucket = selectedBucket ? buckets.find(b => b.key === selectedBucket) : null;
+  renderList(bucket ? bucket.sessions : windowSessions);
+  $('listScope').textContent = bucket ? '· ' + bucket.label : '';
+  $('clearBucket').classList.toggle('hidden', !bucket);
+}
+
 function renderCards(sessions) {
   const sum = f => sessions.reduce((a, s) => a + (s[f] || 0), 0);
-  const cards = [
-    ['Số buổi', sessions.length], ['Tổng set', sum('total_sets')],
-    ['Tổng rep', sum('total_reps')], ['Tổng tập', fmt(sum('active_ms'))],
-  ];
-  $('cards').innerHTML = cards.map(([k, v]) =>
-    `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  const cards = [['Số buổi', sessions.length], ['Tổng set', sum('total_sets')],
+                 ['Tổng rep', sum('total_reps')], ['Tổng tập', fmt(sum('active_ms'))]];
+  $('cards').innerHTML = cards.map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
 }
-function renderChart(asc) {
+
+function renderChart(buckets, bucketLabel) {
+  $('bucketLabel').textContent = bucketLabel;
   const el = $('chart');
-  if (!asc.length) { el.innerHTML = '<div class="muted">Chưa có dữ liệu.</div>'; return; }
-  const data = asc.slice(-12).map(s => ({ reps: s.total_reps || 0, label: shortDate(s.created_at) }));
-  const max = Math.max(...data.map(d => d.reps), 1);
-  const W = 340, H = 150, PADB = 20, PADX = 6, plotH = H - 16 - PADB, bw = (W - PADX * 2) / data.length;
+  if (!buckets.length) { el.innerHTML = '<div class="empty">Chưa có dữ liệu trong khoảng này.</div>'; return; }
+  const max = Math.max(...buckets.map(b => b.total), 1);
+  const H = 178, PADB = 22, plotH = H - 18 - PADB, BW = 48, BARW = 26;
+  const W = Math.max(buckets.length * BW, 280);
   let svg = '';
-  data.forEach((d, i) => {
-    const h = (d.reps / max) * plotH, x = PADX + i * bw + bw * 0.18, w = bw * 0.64, y = H - PADB - h;
-    svg += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="var(--accent)"/>`;
-    svg += `<text x="${(x + w / 2).toFixed(1)}" y="${(y - 3).toFixed(1)}" font-size="9" text-anchor="middle" fill="var(--fg)">${d.reps}</text>`;
-    svg += `<text x="${(x + w / 2).toFixed(1)}" y="${H - 6}" font-size="8" text-anchor="middle" fill="var(--muted)">${d.label}</text>`;
+  buckets.forEach((b, i) => {
+    const cx = i * BW + BW / 2, x = cx - BARW / 2;
+    let yTop = H - PADB;
+    for (const ex of EXORDER) {
+      const r = b.byExercise[ex]; if (!r) continue;
+      const h = (r / max) * plotH; yTop -= h;
+      svg += `<rect x="${x}" y="${yTop.toFixed(1)}" width="${BARW}" height="${h.toFixed(1)}" fill="${EXC[ex].color}"/>`;
+      if (h > 13) svg += `<text x="${cx}" y="${(yTop + h / 2 + 3).toFixed(1)}" font-size="8" text-anchor="middle" fill="#06121f" font-weight="700">${r}</text>`;
+    }
+    svg += `<text x="${cx}" y="${(yTop - 4).toFixed(1)}" font-size="10" text-anchor="middle" fill="var(--fg)" font-weight="700">${b.total}</text>`;
+    const sel = b.key === selectedBucket;
+    svg += `<text x="${cx}" y="${H - 7}" font-size="8.5" text-anchor="middle" fill="${sel ? 'var(--accent)' : 'var(--muted)'}" font-weight="${sel ? 700 : 400}">${b.label}</text>`;
+    svg += `<rect x="${i * BW}" y="0" width="${BW}" height="${H}" fill="transparent" data-bucket="${b.key}" style="cursor:pointer"/>`;
   });
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${svg}</svg>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="display:block">${svg}</svg>`;
 }
+
+function renderLegend() {
+  $('legend').innerHTML = EXORDER.map(ex => `<span class="lg"><i style="background:${EXC[ex].color}"></i>${EXC[ex].name}</span>`).join('');
+}
+
+function repsInRange(from, to) {
+  return allSessions.filter(s => s.date >= from && s.date < to).reduce((a, s) => a + (s.total_reps || 0), 0);
+}
+function computeStreak() {
+  const days = new Set(allSessions.map(s => dayKey(startOfDay(s.date))));
+  let d = startOfDay(new Date()), n = 0;
+  if (!days.has(dayKey(d))) d.setDate(d.getDate() - 1);   // hôm nay chưa tập thì chưa phá streak
+  while (days.has(dayKey(d))) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+function renderStreakCompareGoal() {
+  const streak = computeStreak();
+  const ws = weekStart(new Date());
+  const nextWs = new Date(ws); nextWs.setDate(nextWs.getDate() + 7);
+  const lastWs = new Date(ws); lastWs.setDate(lastWs.getDate() - 7);
+  const thisW = repsInRange(ws, nextWs), lastW = repsInRange(lastWs, ws);
+  let cmp, cls;
+  if (lastW === 0) { cmp = thisW > 0 ? 'mới' : '—'; cls = 'up'; }
+  else { const p = Math.round((thisW - lastW) / lastW * 100); cmp = (p >= 0 ? '+' : '') + p + '%'; cls = p >= 0 ? 'up' : 'down'; }
+  const target = +(localStorage.getItem('goalPerWeek') || 4);
+  const sessWeek = allSessions.filter(s => s.date >= ws && s.date < nextWs).length;
+  const goalPct = Math.min(100, Math.round(sessWeek / target * 100));
+  $('miniRow').innerHTML =
+    `<div class="mini"><div class="mk">Streak</div><div class="mv">🔥 ${streak} <small>ngày</small></div></div>` +
+    `<div class="mini"><div class="mk">Tuần này</div><div class="mv ${cls}">${cmp} <small>rep</small></div></div>` +
+    `<div class="mini goal" id="goalCard"><div class="mk">Mục tiêu tuần</div><div class="mv">${sessWeek}/${target} <small>buổi</small></div>` +
+    `<div class="goalbar"><i style="width:${goalPct}%"></i></div></div>`;
+}
+
+function renderExerciseProgress(buckets) {
+  $('exSeg').innerHTML = EXORDER.map(ex =>
+    `<button data-ex="${ex}" class="${ex === chartExercise ? 'active' : ''}" style="color:${ex === chartExercise ? EXC[ex].color : 'var(--muted)'}" title="${EXC[ex].name}">${EXC[ex].ico}</button>`).join('');
+  const el = $('exChart');
+  const data = buckets.map(b => ({ label: b.label, reps: b.byExercise[chartExercise] || 0 }));
+  if (!data.some(d => d.reps > 0)) { el.innerHTML = `<div class="empty">Chưa có dữ liệu ${EXC[chartExercise].name}.</div>`; return; }
+  const max = Math.max(...data.map(d => d.reps), 1);
+  const H = 130, PADB = 20, plotH = H - 16 - PADB, BW = 48, W = Math.max(data.length * BW, 280);
+  const color = EXC[chartExercise].color;
+  const pts = data.map((d, i) => ({ x: i * BW + BW / 2, y: H - PADB - (d.reps / max) * plotH, d }));
+  let svg = `<polyline fill="none" stroke="${color}" stroke-width="2" points="${pts.map(p => `${p.x},${p.y.toFixed(1)}`).join(' ')}"/>`;
+  pts.forEach(p => {
+    svg += `<circle cx="${p.x}" cy="${p.y.toFixed(1)}" r="3" fill="${color}"/>`;
+    svg += `<text x="${p.x}" y="${(p.y - 6).toFixed(1)}" font-size="8" text-anchor="middle" fill="var(--fg)">${p.d.reps}</text>`;
+    svg += `<text x="${p.x}" y="${H - 6}" font-size="8" text-anchor="middle" fill="var(--muted)">${p.d.label}</text>`;
+  });
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="display:block">${svg}</svg>`;
+}
+
+function renderPR() {
+  const best = {};
+  for (const s of allSessions)
+    for (const [ex, r] of Object.entries(s.byExercise))
+      if (!best[ex] || r > best[ex].reps) best[ex] = { reps: r, date: s.created_at };
+  const rows = EXORDER.filter(ex => best[ex]).map(ex => {
+    const b = best[ex];
+    return `<div class="pr-row"><span><i class="dotc" style="background:${EXC[ex].color}"></i>${EXC[ex].ico} ${EXC[ex].name}</span>` +
+           `<span class="pr-v">🏆 ${b.reps} <small>reps · ${shortDate(b.date)}</small></span></div>`;
+  }).join('');
+  $('prList').innerHTML = rows || '<div class="empty">Chưa có kỷ lục.</div>';
+}
+
+function renderHeatmap() {
+  const WEEKS = 12, today = startOfDay(new Date());
+  const start = weekStart(today); start.setDate(start.getDate() - 7 * (WEEKS - 1));
+  const byDay = {};
+  for (const s of allSessions) { const k = dayKey(startOfDay(s.date)); byDay[k] = (byDay[k] || 0) + (s.total_reps || 0); }
+  const maxDay = Math.max(...Object.values(byDay), 1);
+  let cells = '';
+  for (let w = 0; w < WEEKS; w++) for (let dd = 0; dd < 7; dd++) {
+    const day = new Date(start); day.setDate(day.getDate() + w * 7 + dd);
+    if (day > today) continue;
+    const reps = byDay[dayKey(day)] || 0;
+    const lv = reps === 0 ? 0 : Math.min(4, Math.ceil(reps / maxDay * 4));
+    cells += `<div class="hm-cell lv${lv}" title="${day.getDate()}/${day.getMonth() + 1}: ${reps} reps"></div>`;
+  }
+  $('heatmap').innerHTML = `<div class="hm-grid">${cells}</div>`;
+}
+
 function renderList(sessions) {
-  if (!sessions.length) { $('list').innerHTML = '<div class="empty">Chưa có buổi tập nào.</div>'; return; }
-  $('list').innerHTML = sessions.map(s => `
-    <div class="srow">
+  if (!sessions.length) { $('list').innerHTML = '<div class="empty">Không có buổi tập.</div>'; return; }
+  const byDay = {};
+  for (const s of sessions) (byDay[dayKey(startOfDay(s.date))] ||= []).push(s);
+  for (const k in byDay) byDay[k].slice().sort((a, b) => a.date - b.date).forEach((s, i) => { s._idx = i + 1; s._cnt = byDay[k].length; });
+  $('list').innerHTML = sessions.map(s => {
+    const segs = EXORDER.filter(ex => s.byExercise[ex]).map(ex => `<i class="dotc" style="background:${EXC[ex].color}"></i>`).join('');
+    const num = s._cnt > 1 ? ` · Session ${s._idx}` : '';
+    return `<div class="srow">
       <div class="srow-head" data-id="${s.id}">
         <div>
-          <div class="sdate">${fullDate(s.created_at)}</div>
-          <div class="ssub muted">${s.total_sets || 0} set · ${s.total_reps || 0} reps · ${fmt(s.active_ms)} tập</div>
+          <div class="sdate">${fullDate(s.created_at)}${num}</div>
+          <div class="ssub muted">${segs}${s.total_sets || 0} set · ${s.total_reps || 0} reps</div>
+          <div class="ssub muted">⏱ ${fmt(s.duration_ms)} buổi · ${fmt(s.active_ms)} tập · ${fmt(s.rest_ms)} nghỉ</div>
         </div>
         <button class="del" data-del="${s.id}" title="Xoá">✕</button>
       </div>
       <div class="sdetail hidden" id="detail-${s.id}"></div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
+
 async function toggleDetail(id) {
   const box = $('detail-' + id);
   if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
@@ -383,8 +637,8 @@ async function toggleDetail(id) {
     const s = await api('/api/sessions/' + id);
     const sets = s.data?.sets || [];
     box.innerHTML = sets.length ? sets.map(st => {
-      const ex = niceByName(st.exercise);
-      return `<div class="set-row"><span class="n">Set ${st.index} · ${ex.ico} ${ex.name}</span>` +
+      const ex = excInfo(st.exercise);
+      return `<div class="set-row"><span class="n"><i class="dotc" style="background:${ex.color}"></i>Set ${st.index} · ${ex.ico} ${ex.name}</span>` +
              `<span class="r">${st.reps} <small>reps · ${fmt(st.durationMs)}</small></span></div>`;
     }).join('') : '<div class="muted" style="padding:8px 0">Không có set nào.</div>';
     box.dataset.loaded = '1';
@@ -610,6 +864,29 @@ $('list').addEventListener('click', e => {
   if (del) { e.stopPropagation(); deleteSession(del.dataset.del); return; }
   const head = e.target.closest('[data-id]');
   if (head) toggleDetail(head.dataset.id);
+});
+$('periodSeg').addEventListener('click', e => {
+  const b = e.target.closest('[data-p]'); if (!b) return;
+  period = b.dataset.p; selectedBucket = null; renderProgress();
+});
+$('rangeApply').addEventListener('click', () => {
+  customFrom = $('rangeFrom').value ? new Date($('rangeFrom').value) : null;
+  customTo   = $('rangeTo').value ? new Date($('rangeTo').value) : null;
+  period = 'custom'; selectedBucket = null; renderProgress();
+});
+$('exSeg').addEventListener('click', e => {
+  const b = e.target.closest('[data-ex]'); if (b) { chartExercise = b.dataset.ex; renderProgress(); }
+});
+$('chart').addEventListener('click', e => {
+  const r = e.target.closest('[data-bucket]'); if (!r) return;
+  selectedBucket = selectedBucket === r.dataset.bucket ? null : r.dataset.bucket;
+  renderProgress();
+});
+$('clearBucket').addEventListener('click', () => { selectedBucket = null; renderProgress(); });
+$('miniRow').addEventListener('click', e => {
+  if (!e.target.closest('#goalCard')) return;
+  const v = prompt('Mục tiêu số buổi mỗi tuần:', localStorage.getItem('goalPerWeek') || '4');
+  if (v && +v > 0) { localStorage.setItem('goalPerWeek', String(Math.round(+v))); renderProgress(); }
 });
 
 $('btnConnect').addEventListener('click', async () => {     // PHẢI từ user gesture

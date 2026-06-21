@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>EdgeAI Workout Tracker</title>
+<title>EdgeAI Workout</title>
 <style>
   :root {
     --bg: #0d0f14; --card: #171a21; --line: #262b35;
@@ -14,11 +14,43 @@
   body { font-family: -apple-system, system-ui, sans-serif; margin: 0;
          background: var(--bg); color: var(--fg); padding: 14px;
          max-width: 520px; margin: 0 auto; }
+  .muted { color: var(--muted); }
+  .hidden { display: none !important; }
 
-  /* ── Top bar: tên app + pill kết nối ── */
-  .topbar { display: flex; align-items: center; justify-content: space-between;
-            margin-bottom: 14px; }
-  .topbar h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  /* ── Buttons + inputs ── */
+  .btn { font-size: 15px; font-weight: 600; padding: 12px 18px; border-radius: 12px;
+         border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #06121f; }
+  .btn-primary:disabled { background: var(--card); border-color: var(--line); color: var(--muted); }
+  .btn-ghost { background: transparent; color: var(--muted); }
+  .btn-sm { font-size: 13px; padding: 7px 12px; }
+  .btn-block { display: block; width: 100%; margin-bottom: 12px; }
+  input { width: 100%; font-size: 16px; padding: 12px 14px; border-radius: 11px;
+          border: 1px solid var(--line); background: #0a0c10; color: var(--fg); margin-bottom: 10px; }
+  input:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Auth ── */
+  .auth { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+          padding: 22px; margin-top: 8vh; }
+  .auth h2 { margin: 0 0 4px; font-size: 20px; }
+  .authtabs { display: flex; gap: 8px; margin: 14px 0 18px; }
+  .authtabs .btn { flex: 1; }
+  .authtabs .btn.active { background: var(--accent); border-color: var(--accent); color: #06121f; }
+  .msg { font-size: 14px; margin-top: 10px; min-height: 18px; }
+  .msg.err { color: var(--err); } .msg.ok { color: var(--ok); }
+  .server-line { font-size: 12px; color: var(--muted); margin-top: 14px; text-align: center; }
+  .server-line a { color: var(--accent); cursor: pointer; }
+
+  /* ── App header + tabs ── */
+  .apptop { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .apptop h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  .apptop .who { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .tabbar { display: flex; gap: 8px; margin-bottom: 14px; }
+  .tabbar .btn { flex: 1; }
+  .tabbar .btn.active { background: var(--accent); border-color: var(--accent); color: #06121f; }
+
+  /* ── Tracker: top bar kết nối ── */
+  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
   .pill { display: inline-flex; align-items: center; gap: 7px; font-size: 13px;
           padding: 6px 12px; border-radius: 999px; background: var(--card);
           border: 1px solid var(--line); color: var(--muted); }
@@ -28,7 +60,7 @@
   .pill.err .dot { background: var(--err); }
   @keyframes blink { 50% { opacity: .25; } }
 
-  /* ── Card chính: activity + hero rep ── */
+  /* ── Hero: activity + rep ── */
   .hero { background: var(--card); border: 1px solid var(--line); border-radius: 18px;
           padding: 22px 18px; text-align: center; margin-bottom: 12px; }
   .act { font-size: 22px; font-weight: 600; }
@@ -37,8 +69,7 @@
   #rep { font-size: 96px; font-weight: 800; line-height: 1.05; margin: 4px 0;
          font-variant-numeric: tabular-nums; }
   #rep.idle { color: var(--muted); opacity: .5; }
-  .reps-label { font-size: 13px; color: var(--muted); text-transform: uppercase;
-                letter-spacing: 1.5px; }
+  .reps-label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.5px; }
   .live { display: inline-flex; align-items: center; gap: 8px; margin-top: 16px;
           font-size: 14px; padding: 8px 16px; border-radius: 999px;
           background: #0a0c10; border: 1px solid var(--line); color: var(--muted); }
@@ -48,12 +79,11 @@
 
   /* ── Stats nhỏ ── */
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
-  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-          padding: 13px 16px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 13px 16px; }
   .stat .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
   .stat .v { font-size: 24px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
 
-  /* ── Lịch sử set ── */
+  /* ── Lịch sử set (trong buổi) ── */
   .sets { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
           padding: 14px 16px; margin-bottom: 12px; }
   .sets-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -67,82 +97,138 @@
   .set-row .r small { font-weight: 400; color: var(--muted); font-size: 13px; }
   .sets-empty { color: var(--muted); font-size: 14px; padding: 4px 0; }
 
-  /* ── Buttons ── */
-  .btn { font-size: 15px; font-weight: 600; padding: 12px 18px; border-radius: 12px;
-         border: 1px solid var(--line); background: var(--card); color: var(--fg);
-         cursor: pointer; }
-  .btn-primary { background: var(--accent); border-color: var(--accent); color: #06121f; }
-  .btn-primary:disabled { background: var(--card); border-color: var(--line); color: var(--muted); }
-  .btn-ghost { background: transparent; color: var(--muted); }
-  .btn-sm { font-size: 13px; padding: 7px 12px; }
-  .btn-block { display: block; width: 100%; margin-bottom: 12px; }
   .toggles { display: flex; gap: 10px; margin-bottom: 12px; }
   .toggles .btn { flex: 1; }
-  .top-right { display: flex; align-items: center; gap: 8px; }
   .ctrl-row { display: flex; gap: 10px; margin-bottom: 12px; }
   .ctrl-row .btn { flex: 1; }
 
-  /* ── Log (ẩn mặc định) ── */
+  /* ── Log ── */
   #log { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted);
          white-space: pre-line; max-height: 32vh; overflow-y: auto;
          background: #0a0c10; border: 1px solid var(--line); border-radius: 12px;
          padding: 10px 12px; margin-top: 4px; }
-  .hidden { display: none !important; }
+
+  /* ── Tiến độ (dashboard) ── */
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .card .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .card .v { font-size: 26px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+           padding: 16px; margin-bottom: 14px; }
+  .panel .t { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+  .srow { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; overflow: hidden; }
+  .srow-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+               padding: 11px 14px; cursor: pointer; }
+  .srow-head:hover { background: #1c2029; }
+  .sdate { font-size: 15px; font-weight: 600; }
+  .ssub { font-size: 13px; margin-top: 2px; }
+  .del { background: transparent; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 6px; }
+  .del:hover { color: var(--err); }
+  .sdetail { padding: 2px 14px 12px; border-top: 1px solid var(--line); }
+  .empty { text-align: center; color: var(--muted); padding: 24px 0; font-size: 14px; }
 </style>
 </head>
 <body>
 
-<div class="topbar">
-  <h1>EdgeAI Workout</h1>
-  <div class="top-right">
-    <span class="pill" id="pill"><span class="dot"></span><span id="pilltxt">Chưa kết nối</span></span>
-    <button class="btn btn-ghost btn-sm hidden" id="btnEnd">Kết thúc</button>
+<!-- ════════ ĐĂNG NHẬP ════════ -->
+<div id="authView">
+  <div class="auth">
+    <h2>EdgeAI Workout</h2>
+    <div class="muted">Đăng nhập để theo dõi và lưu buổi tập.</div>
+    <div class="authtabs">
+      <button class="btn active" id="tabLogin">Đăng nhập</button>
+      <button class="btn" id="tabRegister">Đăng ký</button>
+    </div>
+    <input id="email" type="email" placeholder="Email" autocomplete="username">
+    <input id="password" type="password" placeholder="Mật khẩu" autocomplete="current-password">
+    <button class="btn btn-primary btn-block" id="authSubmit">Đăng nhập</button>
+    <div class="msg" id="authMsg"></div>
+    <div class="server-line">Server: <span id="serverUrl"></span> · <a id="changeServer">đổi</a></div>
   </div>
 </div>
 
-<div class="hero">
-  <div class="act idle" id="act"><span class="ico">😴</span> <span id="actname">—</span></div>
-  <div id="rep" class="idle">—</div>
-  <div class="reps-label">reps</div>
-  <div class="live" id="live"><span id="livelbl">Sẵn sàng</span> <b id="livetime">0:00</b></div>
-</div>
-
-<button class="btn btn-primary btn-block" id="btnConnect">Kết nối</button>
-<div class="ctrl-row hidden" id="ctrlRow">
-  <button class="btn" id="btnDisconnect">Ngắt kết nối</button>
-  <button class="btn btn-primary" id="btnStart">Bắt đầu</button>
-</div>
-
-<div class="stats">
-  <div class="stat"><div class="k">Set hiện tại</div><div class="v" id="set">—</div></div>
-  <div class="stat"><div class="k">Tổng rep phiên</div><div class="v" id="total">0</div></div>
-  <div class="stat"><div class="k">Tổng tập</div><div class="v" id="actTime">0:00</div></div>
-  <div class="stat"><div class="k">Tổng nghỉ</div><div class="v" id="restTime">0:00</div></div>
-  <div class="stat"><div class="k">Thời gian buổi</div><div class="v" id="sessTime">0:00</div></div>
-  <div class="stat"><div class="k">Số set</div><div class="v" id="setCount">0</div></div>
-</div>
-
-<div class="toggles">
-  <button class="btn btn-sm" id="histToggle">Lịch sử</button>
-  <button class="btn btn-sm" id="logToggle">Log</button>
-</div>
-
-<div class="sets hidden" id="histPanel">
-  <div class="sets-head">
-    <span class="t">Lịch sử set</span>
+<!-- ════════ APP ════════ -->
+<div id="appView" class="hidden">
+  <div class="apptop">
+    <div>
+      <h1>EdgeAI Workout</h1>
+      <div class="who" id="who"></div>
+    </div>
+    <button class="btn btn-ghost btn-sm" id="logout">Đăng xuất</button>
   </div>
-  <div class="sets-list" id="sets"><div class="sets-empty">Chưa có set nào.</div></div>
-</div>
 
-<div id="log" class="hidden"></div>
+  <div class="tabbar">
+    <button class="btn active" id="tabTrack">Tập</button>
+    <button class="btn" id="tabProgress">Tiến độ</button>
+  </div>
+
+  <!-- ── TAB: Tập ── -->
+  <div id="trackView">
+    <div class="topbar">
+      <span class="pill" id="pill"><span class="dot"></span><span id="pilltxt">Chưa kết nối</span></span>
+      <button class="btn btn-ghost btn-sm hidden" id="btnEnd">Kết thúc</button>
+    </div>
+
+    <div class="hero">
+      <div class="act idle" id="act"><span class="ico">😴</span> <span id="actname">—</span></div>
+      <div id="rep" class="idle">—</div>
+      <div class="reps-label">reps</div>
+      <div class="live" id="live"><span id="livelbl">Sẵn sàng</span> <b id="livetime">0:00</b></div>
+    </div>
+
+    <button class="btn btn-primary btn-block" id="btnConnect">Kết nối</button>
+    <div class="ctrl-row hidden" id="ctrlRow">
+      <button class="btn" id="btnDisconnect">Ngắt kết nối</button>
+      <button class="btn btn-primary" id="btnStart">Bắt đầu</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="k">Set hiện tại</div><div class="v" id="set">—</div></div>
+      <div class="stat"><div class="k">Tổng rep phiên</div><div class="v" id="total">0</div></div>
+      <div class="stat"><div class="k">Tổng tập</div><div class="v" id="actTime">0:00</div></div>
+      <div class="stat"><div class="k">Tổng nghỉ</div><div class="v" id="restTime">0:00</div></div>
+      <div class="stat"><div class="k">Thời gian buổi</div><div class="v" id="sessTime">0:00</div></div>
+      <div class="stat"><div class="k">Số set</div><div class="v" id="setCount">0</div></div>
+    </div>
+
+    <div class="toggles">
+      <button class="btn btn-sm" id="histToggle">Lịch sử</button>
+      <button class="btn btn-sm" id="logToggle">Log</button>
+    </div>
+
+    <div class="sets hidden" id="histPanel">
+      <div class="sets-head"><span class="t">Lịch sử set</span></div>
+      <div class="sets-list" id="sets"><div class="sets-empty">Chưa có set nào.</div></div>
+    </div>
+
+    <div id="log" class="hidden"></div>
+  </div>
+
+  <!-- ── TAB: Tiến độ ── -->
+  <div id="progressView" class="hidden">
+    <div class="cards" id="cards"></div>
+    <div class="panel">
+      <div class="t">Reps mỗi buổi (gần đây)</div>
+      <div id="chart"></div>
+    </div>
+    <div class="panel" style="padding-bottom:8px">
+      <div class="t">Lịch sử buổi tập</div>
+      <div id="list"></div>
+    </div>
+  </div>
+</div>
 
 <script>
+// ════════ Cấu hình ════════
+let API_BASE = localStorage.getItem('apiBase') || 'http://localhost:3000';
+let token    = localStorage.getItem('token') || null;
+let authMode = 'login';
+
 // UUID PHẢI viết thường (Web Bluetooth yêu cầu)
 const SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const TX_UUID      = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 const CLASSES = ['bicep_curl', 'idle', 'lateral_raise', 'shoulder_press', 'tricep_ext'];
 const IDLE = 1;
-const SERVER_URL = '';   // TODO: điền endpoint khi có server, vd 'https://.../api/sessions'
 const NICE = {                                  // index → {tên đẹp, icon}
   0: { name: 'Bicep Curl',     ico: '💪' },
   1: { name: 'Nghỉ',           ico: '😴' },
@@ -150,36 +236,16 @@ const NICE = {                                  // index → {tên đẹp, icon}
   3: { name: 'Shoulder Press', ico: '🏋️' },
   4: { name: 'Tricep Ext',     ico: '🔻' },
 };
+const niceByName = s => NICE[CLASSES.indexOf(s)] ?? { name: s, ico: '❓' };
 
 const $ = id => document.getElementById(id);
 function log(msg) {
   $('log').textContent = new Date().toLocaleTimeString() + '  ' + msg + '\n' + $('log').textContent;
 }
-function setStatus(cls, txt) {                  // cls: '' | 'ok' | 'warn' | 'err'
+function setStatus(cls, txt) {
   $('pill').className = 'pill' + (cls ? ' ' + cls : '');
   $('pilltxt').textContent = txt;
 }
-
-// ── State phiên (UI-side) ──
-let history     = [];        // [{ reps }] — các set đã chốt trong phiên này
-let recordedSet = new Set(); // firmware set_no đã ghi (chống ghi trùng khi idle sticky)
-let baseSet     = 0;         // mốc set_no lúc bấm "Phiên mới"
-let maxSetSeen  = 0;         // set_no lớn nhất từng thấy
-let lastActive  = IDLE;      // bài tập ACTIVE gần nhất (để gán cho set khi đã về idle)
-
-// ── Timer (đếm bằng đồng hồ trình duyệt; packet chỉ đánh dấu mốc chuyển pha) ──
-let sessionStart = 0;        // ms — bắt đầu buổi tập (packet đầu / Phiên mới)
-let phaseStart   = 0;        // ms — mốc pha hiện tại (đang tập HOẶC đang nghỉ)
-let setStart     = 0;        // ms — mốc set đang tập
-let restAccum    = 0;        // ms — tổng nghỉ đã hoàn tất (giữa các set)
-let wasIdle      = true;     // pha trước đó
-let everHadSet   = false;    // đã có ít nhất 1 set → idle mới tính là "nghỉ"
-let lastSetDur   = null;     // ms — thời lượng set vừa chốt
-
-// ── Điều khiển buổi tập ──
-let started = false, paused = false, pauseStart = 0;
-let manualDisconnect = false;   // ngắt chủ động → KHÔNG tự reconnect
-
 function fmt(ms) {
   if (ms == null) return '–';
   const s = Math.floor(ms / 1000);
@@ -187,6 +253,157 @@ function fmt(ms) {
   const pad = n => String(n).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(ss)}` : `${m}:${pad(ss)}`;
 }
+function toDate(str) { return str ? new Date(str.replace(' ', 'T') + 'Z') : null; }
+function fullDate(str) {
+  const d = toDate(str); if (!d) return '—';
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)} · ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function shortDate(str) { const d = toDate(str); return d ? `${d.getDate()}/${d.getMonth() + 1}` : ''; }
+
+// ════════ Gọi API ════════
+async function api(path, opts = {}) {
+  const res = await fetch(API_BASE + path, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  if (res.status === 401) { logout(); throw new Error('Phiên đăng nhập đã hết hạn'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('Lỗi ' + res.status));
+  return data;
+}
+
+// ════════ Auth ════════
+function setMode(mode) {
+  authMode = mode;
+  $('tabLogin').classList.toggle('active', mode === 'login');
+  $('tabRegister').classList.toggle('active', mode === 'register');
+  $('authSubmit').textContent = mode === 'login' ? 'Đăng nhập' : 'Đăng ký';
+  $('password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+  $('authMsg').textContent = '';
+}
+function showAuth() { $('appView').classList.add('hidden'); $('authView').classList.remove('hidden'); }
+function showApp(user) {
+  $('authView').classList.add('hidden'); $('appView').classList.remove('hidden');
+  $('who').textContent = user?.email || '';
+  showTab('track');
+  flushOutbox();                 // có buổi nào kẹt hàng đợi thì gửi nốt
+}
+function logout() {
+  token = null; localStorage.removeItem('token');
+  $('password').value = '';
+  showAuth();
+}
+async function doAuth() {
+  const email = $('email').value.trim(), password = $('password').value;
+  if (!email || !password) { $('authMsg').className = 'msg err'; $('authMsg').textContent = 'Nhập email và mật khẩu.'; return; }
+  $('authSubmit').disabled = true;
+  try {
+    const data = await api('/api/auth/' + authMode, { method: 'POST', body: JSON.stringify({ email, password }) });
+    token = data.token; localStorage.setItem('token', token);
+    showApp(data.user);
+  } catch (e) {
+    $('authMsg').className = 'msg err';
+    $('authMsg').textContent = String(e.message).includes('Failed to fetch')
+      ? 'Không kết nối được server — kiểm tra địa chỉ server.' : e.message;
+  } finally {
+    $('authSubmit').disabled = false;
+  }
+}
+
+// ════════ Tab ════════
+function showTab(name) {
+  const track = name === 'track';
+  $('trackView').classList.toggle('hidden', !track);
+  $('progressView').classList.toggle('hidden', track);
+  $('tabTrack').classList.toggle('active', track);
+  $('tabProgress').classList.toggle('active', !track);
+  if (!track) loadSessions();
+}
+
+// ════════ Tiến độ (dashboard) ════════
+async function loadSessions() {
+  $('list').innerHTML = '<div class="empty">Đang tải…</div>';
+  let sessions;
+  try { sessions = await api('/api/sessions'); }
+  catch (e) { $('list').innerHTML = `<div class="empty">Lỗi: ${e.message}</div>`; return; }
+  renderCards(sessions);
+  renderChart([...sessions].reverse());   // API trả mới→cũ; chart cần cũ→mới
+  renderList(sessions);
+}
+function renderCards(sessions) {
+  const sum = f => sessions.reduce((a, s) => a + (s[f] || 0), 0);
+  const cards = [
+    ['Số buổi', sessions.length], ['Tổng set', sum('total_sets')],
+    ['Tổng rep', sum('total_reps')], ['Tổng tập', fmt(sum('active_ms'))],
+  ];
+  $('cards').innerHTML = cards.map(([k, v]) =>
+    `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+}
+function renderChart(asc) {
+  const el = $('chart');
+  if (!asc.length) { el.innerHTML = '<div class="muted">Chưa có dữ liệu.</div>'; return; }
+  const data = asc.slice(-12).map(s => ({ reps: s.total_reps || 0, label: shortDate(s.created_at) }));
+  const max = Math.max(...data.map(d => d.reps), 1);
+  const W = 340, H = 150, PADB = 20, PADX = 6, plotH = H - 16 - PADB, bw = (W - PADX * 2) / data.length;
+  let svg = '';
+  data.forEach((d, i) => {
+    const h = (d.reps / max) * plotH, x = PADX + i * bw + bw * 0.18, w = bw * 0.64, y = H - PADB - h;
+    svg += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="var(--accent)"/>`;
+    svg += `<text x="${(x + w / 2).toFixed(1)}" y="${(y - 3).toFixed(1)}" font-size="9" text-anchor="middle" fill="var(--fg)">${d.reps}</text>`;
+    svg += `<text x="${(x + w / 2).toFixed(1)}" y="${H - 6}" font-size="8" text-anchor="middle" fill="var(--muted)">${d.label}</text>`;
+  });
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${svg}</svg>`;
+}
+function renderList(sessions) {
+  if (!sessions.length) { $('list').innerHTML = '<div class="empty">Chưa có buổi tập nào.</div>'; return; }
+  $('list').innerHTML = sessions.map(s => `
+    <div class="srow">
+      <div class="srow-head" data-id="${s.id}">
+        <div>
+          <div class="sdate">${fullDate(s.created_at)}</div>
+          <div class="ssub muted">${s.total_sets || 0} set · ${s.total_reps || 0} reps · ${fmt(s.active_ms)} tập</div>
+        </div>
+        <button class="del" data-del="${s.id}" title="Xoá">✕</button>
+      </div>
+      <div class="sdetail hidden" id="detail-${s.id}"></div>
+    </div>`).join('');
+}
+async function toggleDetail(id) {
+  const box = $('detail-' + id);
+  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  if (box.dataset.loaded) return;
+  box.innerHTML = '<div class="muted" style="padding:8px 0">Đang tải…</div>';
+  try {
+    const s = await api('/api/sessions/' + id);
+    const sets = s.data?.sets || [];
+    box.innerHTML = sets.length ? sets.map(st => {
+      const ex = niceByName(st.exercise);
+      return `<div class="set-row"><span class="n">Set ${st.index} · ${ex.ico} ${ex.name}</span>` +
+             `<span class="r">${st.reps} <small>reps · ${fmt(st.durationMs)}</small></span></div>`;
+    }).join('') : '<div class="muted" style="padding:8px 0">Không có set nào.</div>';
+    box.dataset.loaded = '1';
+  } catch (e) {
+    box.innerHTML = `<div class="muted" style="padding:8px 0">Lỗi: ${e.message}</div>`;
+  }
+}
+async function deleteSession(id) {
+  if (!confirm('Xoá buổi tập này?')) return;
+  try { await api('/api/sessions/' + id, { method: 'DELETE' }); loadSessions(); }
+  catch (e) { alert('Lỗi: ' + e.message); }
+}
+
+// ════════ State buổi tập (tracker) ════════
+let history = [], recordedSet = new Set(), baseSet = 0, maxSetSeen = 0, lastActive = IDLE;
+let sessionStart = 0, phaseStart = 0, setStart = 0, restAccum = 0;
+let wasIdle = true, everHadSet = false, lastSetDur = null;
+let started = false, paused = false, pauseStart = 0;
+let manualDisconnect = false;
 
 function renderSets() {
   const list = $('sets');
@@ -204,26 +421,22 @@ function renderSets() {
   $('setCount').textContent = history.length;
   $('histToggle').textContent = 'Lịch sử' + (history.length ? ` (${history.length})` : '');
 }
-
-function setConnUI(connected) {                 // đổi giữa nút "Kết nối" và hàng điều khiển
+function setConnUI(connected) {
   $('btnConnect').classList.toggle('hidden', connected);
   $('ctrlRow').classList.toggle('hidden', !connected);
 }
-
-function updateCtrl() {                          // nhãn nút bắt đầu/dừng/tiếp tục + nút Kết thúc
+function updateCtrl() {
   const b = $('btnStart');
   if (!started)     b.textContent = 'Bắt đầu';
   else if (!paused) b.textContent = 'Dừng';
   else              b.textContent = 'Tiếp tục';
   $('btnEnd').classList.toggle('hidden', !started);
 }
-
 function resetSessionVars() {
-  history = []; recordedSet.clear(); baseSet = maxSetSeen;   // bỏ qua mọi set firmware đã đếm
+  history = []; recordedSet.clear(); baseSet = maxSetSeen;
   setStart = 0; restAccum = 0; wasIdle = true; everHadSet = false; lastSetDur = null;
 }
-
-function startSession() {                        // "Bắt đầu" — vào buổi tập mới
+function startSession() {
   resetSessionVars();
   sessionStart = Date.now(); phaseStart = sessionStart;
   started = true; paused = false;
@@ -232,21 +445,14 @@ function startSession() {                        // "Bắt đầu" — vào bu�
   $('set').textContent = 0;
   log('▶ Bắt đầu buổi tập');
 }
-
-function pauseSession() {                         // "Dừng" — tạm dừng, đóng băng timer
-  paused = true; pauseStart = Date.now();
-  log('⏸ Tạm dừng');
-}
-
-function resumeSession() {                        // "Tiếp tục" — bù khoảng dừng vào các mốc
+function pauseSession() { paused = true; pauseStart = Date.now(); log('⏸ Tạm dừng'); }
+function resumeSession() {
   const delta = Date.now() - pauseStart;
   sessionStart += delta; phaseStart += delta;
   if (setStart) setStart += delta;
-  paused = false;
-  log('▶ Tiếp tục');
+  paused = false; log('▶ Tiếp tục');
 }
-
-function endSession() {                           // "Kết thúc" — dừng buổi tập, về trạng thái chờ
+function endSession() {
   started = false; paused = false;
   sessionStart = 0; phaseStart = 0;
   resetSessionVars();
@@ -260,113 +466,91 @@ function endSession() {                           // "Kết thúc" — dừng bu
   log('⏹ Kết thúc buổi tập');
 }
 
-// Gom dữ liệu buổi tập thành 1 gói để gửi server (gọi TRƯỚC khi endSession reset).
+// Gom dữ liệu buổi tập (gọi TRƯỚC khi endSession reset).
 function buildSessionPayload() {
   const now = Date.now();
   return {
     endedAt:    new Date().toISOString(),
-    durationMs: sessionStart ? now - sessionStart : 0,        // đã trừ thời gian tạm dừng
-    sets: history.map((s, i) => ({
-      index:      i + 1,
-      exercise:   CLASSES[s.cls],
-      reps:       s.reps,
-      durationMs: s.dur,
-    })),
+    durationMs: sessionStart ? now - sessionStart : 0,
+    sets: history.map((s, i) => ({ index: i + 1, exercise: CLASSES[s.cls], reps: s.reps, durationMs: s.dur })),
     totals: {
-      sets:     history.length,
-      reps:     history.reduce((a, s) => a + s.reps, 0),
+      sets: history.length,
+      reps: history.reduce((a, s) => a + s.reps, 0),
       activeMs: history.reduce((a, s) => a + (s.dur || 0), 0),
-      restMs:   restAccum + (wasIdle && everHadSet ? now - phaseStart : 0),
+      restMs: restAccum + (wasIdle && everHadSet ? now - phaseStart : 0),
     },
   };
 }
-
-// Gửi buổi tập lên server. CHƯA cấu hình SERVER_URL → chỉ lưu vào hàng đợi localStorage;
-// khi điền endpoint (+ token đăng nhập) thì tự gửi, mất mạng vẫn không mất dữ liệu.
-async function uploadSession(payload) {
+function enqueueSession(payload) {
   const outbox = JSON.parse(localStorage.getItem('outbox') || '[]');
   outbox.push(payload);
   localStorage.setItem('outbox', JSON.stringify(outbox));
-
-  if (!SERVER_URL) {
-    log(`💾 Đã lưu buổi tập (${payload.totals.sets} set) — chưa cấu hình server.`);
-    return;
-  }
-  try {                                            // gửi cả hàng đợi (gồm buổi cũ chưa gửi được)
+}
+// Gửi cả hàng đợi lên server. Mất mạng/lỗi → giữ lại, lần sau gửi tiếp.
+async function flushOutbox() {
+  const outbox = JSON.parse(localStorage.getItem('outbox') || '[]');
+  if (!outbox.length || !token) return;
+  try {
     for (const item of outbox) {
-      const res = await fetch(SERVER_URL, {
+      const res = await fetch(API_BASE + '/api/sessions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },   // TODO: thêm Authorization khi có đăng nhập
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify(item),
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
     }
-    localStorage.setItem('outbox', '[]');          // tất cả đã gửi → dọn hàng đợi
+    localStorage.setItem('outbox', '[]');
     log(`☁ Đã gửi ${outbox.length} buổi tập lên server.`);
   } catch (e) {
     log('⚠ Gửi server lỗi/mất mạng — giữ trong hàng đợi, gửi sau.');
   }
 }
 
-// Cập nhật đồng hồ live mỗi 250ms (độc lập với nhịp packet).
+// ════════ Đồng hồ live ════════
 function tick() {
   if (!started) return;
-  const now = paused ? pauseStart : Date.now();   // tạm dừng → đóng băng số liệu
+  const now = paused ? pauseStart : Date.now();
   $('sessTime').textContent = fmt(now - sessionStart);
   $('restTime').textContent = fmt(restAccum + (wasIdle && everHadSet ? now - phaseStart : 0));
   const doneDur = history.reduce((a, s) => a + (s.dur || 0), 0);
   $('actTime').textContent = fmt(doneDur + (!wasIdle && setStart ? now - setStart : 0));
-
   const live = $('live');
   if (!wasIdle) {
-    live.className = 'live work';
-    $('livelbl').textContent  = 'Đang tập';
-    $('livetime').textContent = fmt(now - phaseStart);
+    live.className = 'live work'; $('livelbl').textContent = 'Đang tập'; $('livetime').textContent = fmt(now - phaseStart);
   } else if (everHadSet) {
-    live.className = 'live rest';
-    $('livelbl').textContent  = 'Đang nghỉ';
-    $('livetime').textContent = fmt(now - phaseStart);
+    live.className = 'live rest'; $('livelbl').textContent = 'Đang nghỉ'; $('livetime').textContent = fmt(now - phaseStart);
   } else {
-    live.className = 'live';
-    $('livelbl').textContent  = 'Sẵn sàng';
-    $('livetime').textContent = '0:00';
+    live.className = 'live'; $('livelbl').textContent = 'Sẵn sàng'; $('livetime').textContent = '0:00';
   }
 }
 setInterval(tick, 250);
 
+// ════════ BLE packet ════════
 function onPacket(event) {
-  const d = event.target.value;                 // DataView — KHÔNG decode text
+  const d = event.target.value;
   const p = {
-    activity   : d.getUint8(0),
-    confidence : d.getUint8(1),
-    rep_count  : d.getUint8(2),
-    set_no     : d.getUint8(3),
-    timestamp_s: d.getUint16(4, true),          // little-endian
+    activity: d.getUint8(0), confidence: d.getUint8(1), rep_count: d.getUint8(2),
+    set_no: d.getUint8(3), timestamp_s: d.getUint16(4, true),
   };
   const hex = [...new Uint8Array(d.buffer)].map(b => b.toString(16).padStart(2, '0')).join(' ');
-  log(`[${hex}] ${CLASSES[p.activity]} rep=${p.rep_count} set=${p.set_no} ` +
-      `conf=${p.confidence}% up=${p.timestamp_s}s`);
+  log(`[${hex}] ${CLASSES[p.activity]} rep=${p.rep_count} set=${p.set_no} conf=${p.confidence}% up=${p.timestamp_s}s`);
 
-  if (p.set_no > maxSetSeen) maxSetSeen = p.set_no;   // luôn theo dõi để baseSet đúng
-  if (!started || paused) return;                     // chưa bắt đầu / tạm dừng → không tracking
+  if (p.set_no > maxSetSeen) maxSetSeen = p.set_no;
+  if (!started || paused) return;
 
   const idle = p.activity === IDLE;
-  const now  = Date.now();
-  if (!idle) lastActive = p.activity;            // nhớ bài đang tập (idle không mang tên bài)
+  const now = Date.now();
+  if (!idle) lastActive = p.activity;
 
-  // Chuyển pha: ACTIVE↔IDLE → đánh mốc cho timer.
-  if (idle && !wasIdle) {                         // tập xong → bắt đầu nghỉ
+  if (idle && !wasIdle) {
     lastSetDur = setStart ? now - setStart : null;
     phaseStart = now;
-  } else if (!idle && wasIdle) {                  // bắt đầu set mới → chốt khoảng nghỉ vừa rồi
+  } else if (!idle && wasIdle) {
     if (everHadSet) restAccum += now - phaseStart;
-    setStart = now;
-    phaseStart = now;
+    setStart = now; phaseStart = now;
   }
   wasIdle = idle;
 
-  // Chốt set: firmware về idle gửi rep_count = số rep của set vừa xong (sticky).
-  // Ghi 1 lần theo set_no, và chỉ những set sau mốc "Phiên mới".
   if (idle && p.rep_count >= 1 && p.set_no > baseSet && !recordedSet.has(p.set_no)) {
     recordedSet.add(p.set_no);
     history.push({ reps: p.rep_count, cls: lastActive, dur: lastSetDur });
@@ -376,58 +560,65 @@ function onPacket(event) {
     log(`Set ${history.length} xong: ${nm} — ${p.rep_count} reps (${fmt(lastSetDur)})`);
   }
 
-  // Hero: số to reset về 0 khi nghỉ; chạy bài thì hiện rep thật.
   $('rep').textContent = idle ? 0 : p.rep_count;
   $('rep').classList.toggle('idle', idle);
-
   const info = NICE[p.activity] ?? { name: '?' + p.activity, ico: '❓' };
   $('actname').textContent = info.name;
   $('act').querySelector('.ico').textContent = info.ico;
   $('act').classList.toggle('idle', idle);
-
   $('set').textContent = idle ? history.length : Math.max(0, p.set_no - baseSet);
 }
 
+// ════════ BLE connect ════════
 let device = null;
-
-// Connect GATT + subscribe notify. Gọi lại được sau mỗi lần rớt
-// (gói TUYỆT ĐỐI nên rớt giữa chừng không mất dữ liệu — packet sau tự bù).
 async function connectGatt() {
   const server  = await device.gatt.connect();
   const service = await server.getPrimaryService(SERVICE_UUID);
   const txChar  = await service.getCharacteristic(TX_UUID);
-  await txChar.startNotifications();               // bật CCCD notify
+  await txChar.startNotifications();
   txChar.addEventListener('characteristicvaluechanged', onPacket);
   setConnUI(true);
   setStatus('ok', 'Đã kết nối');
 }
-
 async function onDisconnected() {
-  if (manualDisconnect) { manualDisconnect = false; return; }   // ngắt chủ động: bỏ qua
+  if (manualDisconnect) { manualDisconnect = false; return; }
   log('!! MẤT KẾT NỐI — tự reconnect...');
   setStatus('warn', 'Đang kết nối lại…');
   for (let i = 1; i <= 10; i++) {
-    try {
-      await connectGatt();
-      log('Đã kết nối lại (lần thử ' + i + ')');
-      return;
-    } catch (e) {
-      await new Promise(r => setTimeout(r, 1000));   // đợi 1s giữa các lần
-    }
+    try { await connectGatt(); log('Đã kết nối lại (lần thử ' + i + ')'); return; }
+    catch (e) { await new Promise(r => setTimeout(r, 1000)); }
   }
   log('Reconnect thất bại sau 10 lần — bấm nút để thử lại.');
   setStatus('err', 'Mất kết nối');
   setConnUI(false);
 }
 
+// ════════ Events ════════
+$('tabLogin').addEventListener('click', () => setMode('login'));
+$('tabRegister').addEventListener('click', () => setMode('register'));
+$('authSubmit').addEventListener('click', doAuth);
+$('password').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth(); });
+$('changeServer').addEventListener('click', () => {
+  const v = prompt('Địa chỉ server API:', API_BASE);
+  if (v) { API_BASE = v.trim().replace(/\/$/, ''); localStorage.setItem('apiBase', API_BASE); $('serverUrl').textContent = API_BASE; }
+});
+$('logout').addEventListener('click', logout);
+$('tabTrack').addEventListener('click', () => showTab('track'));
+$('tabProgress').addEventListener('click', () => showTab('progress'));
+$('list').addEventListener('click', e => {
+  const del = e.target.closest('[data-del]');
+  if (del) { e.stopPropagation(); deleteSession(del.dataset.del); return; }
+  const head = e.target.closest('[data-id]');
+  if (head) toggleDetail(head.dataset.id);
+});
+
 $('btnConnect').addEventListener('click', async () => {     // PHẢI từ user gesture
   try {
     manualDisconnect = false;
     if (!device) {
       device = await navigator.bluetooth.requestDevice({
-        // match 1 trong 2: service UUID trong advertising HOẶC tên EdgeAI*
         filters: [{ services: [SERVICE_UUID] }, { namePrefix: 'EdgeAI' }],
-        optionalServices: [SERVICE_UUID],   // cần khi match bằng namePrefix
+        optionalServices: [SERVICE_UUID],
       });
       log('Đã chọn: ' + device.name);
       device.addEventListener('gattserverdisconnected', onDisconnected);
@@ -440,7 +631,6 @@ $('btnConnect').addEventListener('click', async () => {     // PHẢI từ user 
     setStatus('err', 'Lỗi kết nối');
   }
 });
-
 $('btnDisconnect').addEventListener('click', () => {
   manualDisconnect = true;
   if (device && device.gatt.connected) device.gatt.disconnect();
@@ -448,21 +638,18 @@ $('btnDisconnect').addEventListener('click', () => {
   setStatus('', 'Đã ngắt');
   log('Đã ngắt kết nối (chủ động).');
 });
-
 $('btnStart').addEventListener('click', () => {
   if (!started)      startSession();
   else if (!paused)  pauseSession();
   else               resumeSession();
   updateCtrl();
 });
-
 $('btnEnd').addEventListener('click', async () => {
-  if (!confirm('Kết thúc buổi tập? Dữ liệu sẽ được lưu lại (gửi lên server khi đã cấu hình).')) return;
-  if (history.length > 0) await uploadSession(buildSessionPayload());   // gửi TRƯỚC khi reset
+  if (!confirm('Kết thúc buổi tập? Dữ liệu sẽ được gửi lên server.')) return;
+  if (history.length > 0) { enqueueSession(buildSessionPayload()); await flushOutbox(); }
   endSession();
   updateCtrl();
 });
-
 $('logToggle').addEventListener('click', () => {
   const hidden = $('log').classList.toggle('hidden');
   $('logToggle').classList.toggle('btn-primary', !hidden);
@@ -475,6 +662,14 @@ $('histToggle').addEventListener('click', () => {
 if (!navigator.bluetooth) {
   log('Trình duyệt này KHÔNG có Web Bluetooth — hãy mở bằng Bluefy (iOS) hoặc Chrome (Android/PC).');
   setStatus('err', 'Không hỗ trợ BLE');
+}
+
+// ════════ Khởi động ════════
+$('serverUrl').textContent = API_BASE;
+if (token) {
+  api('/api/auth/me').then(u => showApp(u)).catch(() => showAuth());
+} else {
+  showAuth();
 }
 </script>
 </body>

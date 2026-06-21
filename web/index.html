@@ -567,14 +567,17 @@ function renderExerciseProgress(buckets) {
   const data = buckets.map(b => ({ label: b.label, reps: b.byExercise[chartExercise] || 0 }));
   if (!data.some(d => d.reps > 0)) { el.innerHTML = `<div class="empty">Chưa có dữ liệu ${EXC[chartExercise].name}.</div>`; return; }
   const max = Math.max(...data.map(d => d.reps), 1);
-  const H = 130, PADB = 20, plotH = H - 16 - PADB, BW = 48, W = Math.max(data.length * BW, 280);
+  const H = 130, PADB = 20, plotH = H - 16 - PADB, BW = 48, BARW = 26, W = Math.max(data.length * BW, 280);
   const color = EXC[chartExercise].color;
-  const pts = data.map((d, i) => ({ x: i * BW + BW / 2, y: H - PADB - (d.reps / max) * plotH, d }));
-  let svg = `<polyline fill="none" stroke="${color}" stroke-width="2" points="${pts.map(p => `${p.x},${p.y.toFixed(1)}`).join(' ')}"/>`;
-  pts.forEach(p => {
-    svg += `<circle cx="${p.x}" cy="${p.y.toFixed(1)}" r="3" fill="${color}"/>`;
-    svg += `<text x="${p.x}" y="${(p.y - 6).toFixed(1)}" font-size="8" text-anchor="middle" fill="var(--fg)">${p.d.reps}</text>`;
-    svg += `<text x="${p.x}" y="${H - 6}" font-size="8" text-anchor="middle" fill="var(--muted)">${p.d.label}</text>`;
+  let svg = '';
+  data.forEach((d, i) => {
+    const cx = i * BW + BW / 2, x = cx - BARW / 2;
+    const h = (d.reps / max) * plotH, y = H - PADB - h;
+    if (d.reps > 0) {
+      svg += `<rect x="${x}" y="${y.toFixed(1)}" width="${BARW}" height="${h.toFixed(1)}" rx="2" fill="${color}"/>`;
+      svg += `<text x="${cx}" y="${(y - 4).toFixed(1)}" font-size="9" text-anchor="middle" fill="var(--fg)" font-weight="700">${d.reps}</text>`;
+    }
+    svg += `<text x="${cx}" y="${H - 6}" font-size="8" text-anchor="middle" fill="var(--muted)">${d.label}</text>`;
   });
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="display:block">${svg}</svg>`;
 }
